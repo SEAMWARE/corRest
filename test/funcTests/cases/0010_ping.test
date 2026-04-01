@@ -1,0 +1,23 @@
+--NAME--
+GET ping
+
+--INIT--
+swBrokerStart
+
+--RUN--
+echo "01. GET /api/v1/ping"
+echo "====================="
+swCurl --url /api/v1/ping
+
+--EXPECT--
+01. GET /api/v1/ping
+=====================
+HTTP/1.1 200 OK
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: 15
+
+{"ping":"pong"}
+
+--TEARDOWN--
+swBrokerStop

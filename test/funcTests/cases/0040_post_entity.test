@@ -1,0 +1,24 @@
+--NAME--
+POST entity with JSON payload
+
+--INIT--
+swBrokerStart
+
+--RUN--
+echo "01. POST /api/v1/entities"
+echo "========================="
+swCurl -X POST --url /api/v1/entities --payload '{"type":"T","id":"E2"}'
+
+--EXPECT--
+01. POST /api/v1/entities
+=========================
+HTTP/1.1 201 Created
+Date: REGEX(.*)
+Content-Type: application/json
+Location: /api/v1/entities/urn:new:1
+Content-Length: REGEX(\d+)
+
+{"created":true,"payloadSize":REGEX(\d+),"payloadType":"Object"}
+
+--TEARDOWN--
+swBrokerStop

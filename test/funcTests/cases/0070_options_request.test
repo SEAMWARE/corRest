@@ -1,0 +1,56 @@
+--NAME--
+OPTIONS requests (auto-generated, Allow header lists registered verbs)
+
+--INIT--
+swBrokerStart
+
+--RUN--
+echo "01. OPTIONS /api/v1/ping - GET-only endpoint"
+echo "=============================================="
+swCurl -X OPTIONS --url /api/v1/ping
+echo "02. OPTIONS /api/v1/entities - POST endpoint"
+echo "=============================================="
+swCurl -X OPTIONS --url /api/v1/entities
+echo "03. OPTIONS /api/v1/entities/E1 - wildcard GET endpoint"
+echo "========================================================"
+swCurl -X OPTIONS --url /api/v1/entities/E1
+echo "04. OPTIONS /no/such/path - 404"
+echo "================================"
+swCurl -X OPTIONS --url /no/such/path
+
+--EXPECT--
+01. OPTIONS /api/v1/ping - GET-only endpoint
+==============================================
+HTTP/1.1 204 No Content
+Date: REGEX(.*)
+Content-Type: application/json
+Allow: GET, HEAD, OPTIONS
+
+
+02. OPTIONS /api/v1/entities - POST endpoint
+==============================================
+HTTP/1.1 204 No Content
+Date: REGEX(.*)
+Content-Type: application/json
+Allow: POST, OPTIONS
+
+
+03. OPTIONS /api/v1/entities/E1 - wildcard GET endpoint
+========================================================
+HTTP/1.1 204 No Content
+Date: REGEX(.*)
+Content-Type: application/json
+Allow: GET, HEAD, OPTIONS
+
+
+04. OPTIONS /no/such/path - 404
+================================
+HTTP/1.1 404 Not Found
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: REGEX(\d+)
+
+{"type":"https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound","title":"Not Found","detail":"OPTIONS /no/such/path is not a recognized resource"}
+
+--TEARDOWN--
+swBrokerStop

@@ -1,0 +1,44 @@
+--NAME--
+HEAD requests (auto-generated from GET, no body, correct Content-Length)
+
+--INIT--
+swBrokerStart
+
+--RUN--
+echo "01. HEAD /api/v1/ping - same headers as GET, no body"
+echo "====================================================="
+curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/api/v1/ping | tr -d '\r' | grep -v "^$"
+echo ""
+echo "02. HEAD /api/v1/entities/E1 - wildcard URL works"
+echo "=================================================="
+curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/api/v1/entities/E1 | tr -d '\r' | grep -v "^$"
+echo ""
+echo "03. HEAD /no/such/path - 404"
+echo "============================="
+curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/no/such/path | tr -d '\r' | grep -v "^$"
+
+--EXPECT--
+01. HEAD /api/v1/ping - same headers as GET, no body
+=====================================================
+HTTP/1.1 200 OK
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: 15
+
+02. HEAD /api/v1/entities/E1 - wildcard URL works
+==================================================
+HTTP/1.1 200 OK
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: REGEX(\d+)
+
+03. HEAD /no/such/path - 404
+=============================
+HTTP/1.1 404 Not Found
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: REGEX(\d+)
+
+
+--TEARDOWN--
+swBrokerStop

@@ -1,0 +1,23 @@
+--NAME--
+GET entity attribute (double wildcard)
+
+--INIT--
+swBrokerStart
+
+--RUN--
+echo "01. GET /api/v1/entities/E1/attrs/temperature"
+echo "=============================================="
+swCurl --url /api/v1/entities/E1/attrs/temperature
+
+--EXPECT--
+01. GET /api/v1/entities/E1/attrs/temperature
+==============================================
+HTTP/1.1 200 OK
+Date: REGEX(.*)
+Content-Type: application/json
+Content-Length: REGEX(\d+)
+
+{"entity":"E1","attr":"temperature"}
+
+--TEARDOWN--
+swBrokerStop
