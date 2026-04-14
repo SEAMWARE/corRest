@@ -50,8 +50,9 @@ typedef struct SwRestState
   // Payload accumulation (during MHD body reads)
   int                     payloadBufSize;
 
-  // Request timing (microseconds since epoch)
-  uint64_t                requestStartTime;
+  // Request timing
+  uint64_t                requestStartTime;      // CLOCK_REALTIME microseconds (for timestamps)
+  uint64_t                requestStartTimeMono;  // CLOCK_MONOTONIC microseconds (for duration metrics)
 
   // User-defined context
   void*                   userData;

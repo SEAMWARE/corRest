@@ -152,7 +152,7 @@ typedef struct SwRestClientMulti SwRestClientMulti;
 //
 // Init / Cleanup
 //
-extern int   swRestClientInit(int maxIdleConns, int idleTimeoutSec);
+extern int   swRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
 extern void  swRestClientCleanup(void);
 
 

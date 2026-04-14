@@ -372,10 +372,14 @@ static enum MHD_Result mhdConnectionHandler
   {
     swRestStateInit(connection, url, method);
 
-    // Capture request start time for duration metrics
+    // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    swRest.requestStartTime = (uint64_t) ts.tv_sec * 1000000ULL + (uint64_t) ts.tv_nsec / 1000ULL;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    swRest.requestStartTime = (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
+
+    struct timespec tsM;
+    clock_gettime(CLOCK_MONOTONIC, &tsM);
+    swRest.requestStartTimeMono = (uint64_t) tsM.tv_sec * 1000000000ULL + (uint64_t) tsM.tv_nsec;
 
     // Collect request headers from MHD
     MHD_get_connection_values(connection, MHD_HEADER_KIND, mhdHeaderIterator, NULL);
@@ -547,6 +551,39 @@ static enum MHD_Result mhdConnectionHandler
   for (int i = 0; i < swRest.out.headerCount; i++)
     MHD_add_response_header(response, swRest.out.headerV[i].key, swRest.out.headerV[i].value);
 
+  // CORS headers (if configured)
+  extern SwRestCorsConfig swRestCors;
+  if (swRestCors.allowOrigin != NULL)
+  {
+    MHD_add_response_header(response, "Access-Control-Allow-Origin", swRestCors.allowOrigin);
+
+    if (swRest.in.verb == SwVerbOptions)
+    {
+      // Preflight: echo Allow as Access-Control-Allow-Methods
+      for (int i = 0; i < swRest.out.headerCount; i++)
+      {
+        if (strcmp(swRest.out.headerV[i].key, "Allow") == 0)
+        {
+          MHD_add_response_header(response, "Access-Control-Allow-Methods", swRest.out.headerV[i].value);
+          break;
+        }
+      }
+
+      const char* ah = swRestCors.allowHeaders ? swRestCors.allowHeaders : "Content-Type, Accept, Link";
+      MHD_add_response_header(response, "Access-Control-Allow-Headers", ah);
+
+      if (swRestCors.maxAge > 0)
+      {
+        char maxAgeBuf[16];
+        snprintf(maxAgeBuf, sizeof(maxAgeBuf), "%d", swRestCors.maxAge);
+        MHD_add_response_header(response, "Access-Control-Max-Age", maxAgeBuf);
+      }
+    }
+
+    if (swRestCors.exposeHeaders != NULL)
+      MHD_add_response_header(response, "Access-Control-Expose-Headers", swRestCors.exposeHeaders);
+  }
+
   enum MHD_Result ret = MHD_queue_response(connection, swRest.out.httpStatusCode, response);
   MHD_destroy_response(response);
 
@@ -566,8 +603,8 @@ static enum MHD_Result mhdConnectionHandler
     {
       struct timespec now;
       clock_gettime(CLOCK_MONOTONIC, &now);
-      uint64_t nowUs  = (uint64_t) now.tv_sec * 1000000ULL + (uint64_t) now.tv_nsec / 1000ULL;
-      double   durSec = (double)(nowUs - swRest.requestStartTime) / 1000000.0;
+      uint64_t nowNs  = (uint64_t) now.tv_sec * 1000000000ULL + (uint64_t) now.tv_nsec;
+      double   durSec = (double)(nowNs - swRest.requestStartTimeMono) / 1000000000.0;
       kpromHistogramObserve(metricsP->requestDuration, durSec);
     }
   }

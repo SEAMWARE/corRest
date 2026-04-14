@@ -14,3 +14,4 @@ plugins/
 *.teardown
 *.name
 *.stderr
+swRestTest

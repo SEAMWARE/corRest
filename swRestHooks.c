@@ -6,6 +6,7 @@
 // Copyright 2026 Seamware
 //
 #include <stddef.h>                     // NULL
+#include <string.h>                     // memset
 
 #include "swRest/swRestHooks.h"         // Own interface
 
@@ -95,4 +96,20 @@ void swRestSetPreServiceHook(SwRestPreServiceHook fn)
 void swRestSetPrettySpaces(int spaces)
 {
   swRestDefaultPrettySpaces = spaces;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestCorsConfig -
+//
+SwRestCorsConfig swRestCors = { NULL, NULL, NULL, 0 };
+
+void swRestCorsConfig(const SwRestCorsConfig* config)
+{
+  if (config != NULL)
+    swRestCors = *config;
+  else
+    memset(&swRestCors, 0, sizeof(swRestCors));
 }

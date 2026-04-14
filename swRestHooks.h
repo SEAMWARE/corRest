@@ -50,4 +50,23 @@ extern void swRestSetParamHook(SwRestParamHook fn);
 extern void swRestSetPreServiceHook(SwRestPreServiceHook fn);
 extern void swRestSetPrettySpaces(int spaces);
 
+
+
+// -----------------------------------------------------------------------------
+//
+// SwRestCorsConfig - CORS configuration
+//
+// Set allowOrigin to "*" for open access, or a specific origin.
+// Set to NULL to disable CORS headers entirely (default).
+//
+typedef struct SwRestCorsConfig
+{
+  const char*  allowOrigin;       // e.g. "*" or "https://example.com" (NULL = disabled)
+  const char*  allowHeaders;      // e.g. "Content-Type, NGSILD-Tenant, Link" (NULL = use default)
+  const char*  exposeHeaders;     // e.g. "Location, NGSILD-Results-Count, Link" (NULL = none)
+  int          maxAge;            // preflight cache seconds (0 = omit header)
+} SwRestCorsConfig;
+
+extern void swRestCorsConfig(const SwRestCorsConfig* config);
+
 #endif  // SWREST_SW_REST_HOOKS_H_

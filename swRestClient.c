@@ -33,7 +33,8 @@
 //
 // Global pool instance
 //
-static bool tlsInited = false;
+static bool        tlsInited = false;
+static const char* clientUserAgent = "swRest/1.0";
 
 
 
@@ -41,8 +42,11 @@ static bool tlsInited = false;
 //
 // swRestClientInit - Initialize the client subsystem
 //
-int swRestClientInit(int maxIdleConns, int idleTimeoutSec)
+int swRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent)
 {
+  if (userAgent != NULL)
+    clientUserAgent = userAgent;
+
   int s;
 
   s = swRestClientPoolInit(maxIdleConns > 0 ? maxIdleConns : 4,
@@ -474,9 +478,10 @@ static int buildRequestBuf(SwRestClientRequest* req, char* buf, int bufSize,
     return -1;
   p += n;
 
-  if (p + 26 > end) return -1;
-  memcpy(p, "User-Agent: swRest/1.0\r\n", 25);
-  p += 25;
+  n = snprintf(p, end - p, "User-Agent: %s\r\n", clientUserAgent);
+  if (n < 0 || n >= end - p)
+    return -1;
+  p += n;
 
   for (int i = 0; i < req->headerCount; i++)
   {
