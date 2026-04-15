@@ -30,6 +30,7 @@ SwRestHook            swRestPayloadParseHook  = hookNoop;
 SwRestHook            swRestPayloadRenderHook = hookNoop;
 SwRestParamHook       swRestParamHookF        = NULL;
 SwRestPreServiceHook  swRestPreServiceHookF   = preServiceHookNoop;
+SwRestHook            swRestPostResponseHook  = hookNoop;
 int                   swRestDefaultPrettySpaces = 0;
 
 
@@ -85,6 +86,23 @@ void swRestSetParamHook(SwRestParamHook fn)
 void swRestSetPreServiceHook(SwRestPreServiceHook fn)
 {
   swRestPreServiceHookF = (fn != NULL) ? fn : preServiceHookNoop;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestSetPostResponseHook -
+//
+// Called on the same thread as the request handler, AFTER MHD has delivered
+// the response bytes but BEFORE the per-request arena is released. Gives
+// the application a chance to run "fire-and-forget" work (like dispatching
+// subscription notifications) off the client's critical path while still
+// having access to the request-scoped allocations.
+//
+void swRestSetPostResponseHook(SwRestHook fn)
+{
+  swRestPostResponseHook = (fn != NULL) ? fn : hookNoop;
 }
 
 

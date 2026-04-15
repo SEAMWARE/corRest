@@ -48,6 +48,7 @@ extern void swRestSetPayloadParseHook(SwRestHook fn);
 extern void swRestSetPayloadRenderHook(SwRestHook fn);
 extern void swRestSetParamHook(SwRestParamHook fn);
 extern void swRestSetPreServiceHook(SwRestPreServiceHook fn);
+extern void swRestSetPostResponseHook(SwRestHook fn);
 extern void swRestSetPrettySpaces(int spaces);
 
 

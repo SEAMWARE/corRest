@@ -62,6 +62,7 @@ extern SwRestHook            swRestPayloadParseHook;
 extern SwRestHook            swRestPayloadRenderHook;
 extern SwRestParamHook       swRestParamHookF;
 extern SwRestPreServiceHook  swRestPreServiceHookF;
+extern SwRestHook            swRestPostResponseHook;
 
 
 
@@ -628,6 +629,11 @@ static void mhdRequestCompleted
 {
   if (*con_cls != NULL)
   {
+    // Run post-response hook BEFORE releasing the per-request arena so the
+    // hook can still touch arena-allocated data (e.g. deferred notification
+    // dispatch reading the entity tree built by the service routine).
+    swRestPostResponseHook();
+
     // Free payload buffer (malloc'd during accumulation, not in kalloc)
     free(swRest.in.payload);
     swRest.in.payload = NULL;
