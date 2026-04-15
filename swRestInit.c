@@ -513,15 +513,36 @@ static enum MHD_Result mhdConnectionHandler
       swRest.kjsonP->spacesPerIndent = swRest.in.prettySpaces;
       responseBodySize = kjRenderSize(swRest.kjsonP, swRest.out.responseTree) + 1;
       responseBody     = kaAlloc(&swRest.kalloc, responseBodySize);
-      kjRender(swRest.kjsonP, swRest.out.responseTree, responseBody);
+      if (responseBody == NULL)
+      {
+        fprintf(stderr, "swRest: response body alloc failed (need %d bytes) — arena chunk too small?\n", responseBodySize);
+        swRest.out.httpStatusCode = 500;
+        responseBody     = (char*) "";
+        responseBodySize = 0;
+      }
+      else
+      {
+        kjRender(swRest.kjsonP, swRest.out.responseTree, responseBody);
+      }
     }
     else
     {
       responseBodySize = kjFastRenderSize(swRest.out.responseTree) + 1;
       responseBody     = kaAlloc(&swRest.kalloc, responseBodySize);
-      kjFastRender(swRest.out.responseTree, responseBody);
+      if (responseBody == NULL)
+      {
+        fprintf(stderr, "swRest: response body alloc failed (need %d bytes) — arena chunk too small?\n", responseBodySize);
+        swRest.out.httpStatusCode = 500;
+        responseBody     = (char*) "";
+        responseBodySize = 0;
+      }
+      else
+      {
+        kjFastRender(swRest.out.responseTree, responseBody);
+      }
     }
-    responseBodySize = strlen(responseBody);
+    if (responseBody != NULL && responseBody[0] != 0)
+      responseBodySize = strlen(responseBody);
   }
   else if (swRest.out.payload != NULL)
   {

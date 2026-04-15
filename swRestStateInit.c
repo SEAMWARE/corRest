@@ -44,8 +44,11 @@ void swRestStateInit(struct MHD_Connection* connection, const char* url, const c
 
   swRest.mhdConnection = connection;
 
-  // Initialize kalloc pool (inline buffer first, then malloc-based overflow)
-  kaBufferInit(&swRest.kalloc, swRest.kallocBuffer, sizeof(swRest.kallocBuffer), 32 * 1024, NULL, "swRest");
+  // Initialize kalloc pool (inline buffer first, then malloc-based overflow).
+  // 256KB grow chunks: keeps single-shot renderings of ~1000-entity responses
+  // inside one block. kaAlloc silently returns NULL for any single request
+  // >= chunk size, so this also caps the max single allocation.
+  kaBufferInit(&swRest.kalloc, swRest.kallocBuffer, sizeof(swRest.kallocBuffer), 256 * 1024, NULL, "swRest");
 
   // Initialize kjson with kalloc
   swRest.kjsonP = kjBufferCreate(&swRest.kjson, &swRest.kalloc);
