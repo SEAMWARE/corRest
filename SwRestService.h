@@ -56,6 +56,7 @@ typedef struct SwRestServiceSimplified
   const char*              url;
   SwRestServiceRoutine     serviceRoutine;
   uint64_t                 supportedParams;
+  uint64_t                 ldOp;            // LdOp bit for the service's atomic op — 0 for non-NGSI-LD routes
 } SwRestServiceSimplified;
 
 
@@ -72,6 +73,7 @@ typedef struct SwRestService
   char*                  url;                          // URL Path (points into SwRestServiceSimplified)
   SwRestServiceRoutine   serviceRoutine;               // Function pointer
   uint64_t               supportedParams;              // bitmask of accepted URL parameters
+  uint64_t               ldOp;                         // LdOp bit (copied from SwRestServiceSimplified at init)
   int                    wildcards;                    // 0, 1, or 2+
   bool                   greedy;                       // true if last wildcard is ** (matches multiple components)
   int                    charsBeforeFirstWildcard;     // length of fixed prefix before first '*'

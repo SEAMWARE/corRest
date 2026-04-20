@@ -75,6 +75,7 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
   serviceP->url              = (char*) simpleP->url;
   serviceP->serviceRoutine   = simpleP->serviceRoutine;
   serviceP->supportedParams  = simpleP->supportedParams;
+  serviceP->ldOp             = simpleP->ldOp;
   serviceP->wildcards        = 0;
   serviceP->greedy           = false;
 
