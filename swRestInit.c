@@ -457,8 +457,12 @@ static enum MHD_Result mhdConnectionHandler
     goto respond;
   }
 
-  // Validate URL parameters against the service's supported set
-  if (swRest.in.uriParamCount > 0)
+  // Validate URL parameters against the service's supported set.
+  // Sentinel: supportedParams == ~0ULL ("all bits set") means the
+  // service accepts any URL param without validation — used by mocks
+  // (ftClient) and other passthrough tools that don't pre-register
+  // a vocabulary of known params.
+  if (swRest.in.uriParamCount > 0 && swRest.serviceP->supportedParams != ~(uint64_t)0)
   {
     for (int i = 0; i < swRest.in.uriParamCount; i++)
     {
