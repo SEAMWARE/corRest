@@ -22,7 +22,7 @@ LIB           = libswRest.a
 CC            = gcc
 INCLUDE       = -I..
 DFLAGS        =
-CFLAGS        = -O2 -Wall -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE)
+CFLAGS        = -O2 -Wall -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP
 LIB_SOURCES   = swRestInit.c           \
                 swRestStop.c           \
                 swRestStateInit.c      \
@@ -39,6 +39,7 @@ LIB_SOURCES   = swRestInit.c           \
                 swRestClientMulti.c
 
 LIB_OBJS      = $(LIB_SOURCES:c=o)
+LIB_DEPS      = $(LIB_SOURCES:c=d)
 
 TEST          = swRestTest
 TEST_SOURCES  = swRestTest.c
@@ -79,7 +80,9 @@ $(TEST):		$(TEST_OBJS) $(LIB)
 
 
 %.o: %.c
-						$(CC) $(CFLAGS) -c $^ -o $@
+						$(CC) $(CFLAGS) -c $< -o $@
 
 %.i: %.c
 						$(CC) $(CFLAGS) -c $^ -E > $@
+
+-include $(LIB_DEPS)
