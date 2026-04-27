@@ -484,6 +484,27 @@ static enum MHD_Result mhdConnectionHandler
   if (!swRestPreServiceHookF())
     goto respond;
 
+  // Body-presence check for write verbs (POST / PUT / PATCH) on services
+  // that carry an LdOp. Admin endpoints (ldOp == 0) opt out — some are
+  // body-less by design (POST /admin/subStats/flush, etc.).
+  if (swRest.serviceP->ldOp != 0 &&
+      (swRest.in.verb == SwVerbPost  ||
+       swRest.in.verb == SwVerbPut   ||
+       swRest.in.verb == SwVerbPatch))
+  {
+    if (swRest.in.payload != NULL && swRest.in.requestTree == NULL)
+    {
+      swRestProblem(415, SW_REST_ERROR_INVALID_REQ, "Unsupported Media Type",
+                    "supported Content-Types: application/json, application/ld+json");
+      goto respond;
+    }
+    if (swRest.in.requestTree == NULL)
+    {
+      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request", "no payload");
+      goto respond;
+    }
+  }
+
   // Skip the service routine when an earlier hook (parseHook, paramHook,
   // preServiceHook) already set a problem detail — the response is fully
   // determined and the service routine has nothing to do.
