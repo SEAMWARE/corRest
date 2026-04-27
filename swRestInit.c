@@ -484,6 +484,12 @@ static enum MHD_Result mhdConnectionHandler
   if (!swRestPreServiceHookF())
     goto respond;
 
+  // Skip the service routine when an earlier hook (parseHook, paramHook,
+  // preServiceHook) already set a problem detail — the response is fully
+  // determined and the service routine has nothing to do.
+  if (swRest.out.problemType != NULL)
+    goto respond;
+
   // Dispatch to service routine
   swRest.serviceP->serviceRoutine();
 
