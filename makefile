@@ -30,6 +30,7 @@ LIB_SOURCES   = swRestInit.c           \
                 swRestVerbFromString.c \
                 swRestVersion.c        \
                 swRestProblem.c        \
+                swRestOutHeader.c      \
                 swRestHooks.c          \
                 swRestParamRegistry.c  \
                 swRestClient.c         \
