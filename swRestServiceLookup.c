@@ -133,7 +133,7 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
         }
       }
     }
-    else  // 2+ wildcards
+    else if (serviceP->wildcards == 2)
     {
       if (serviceP->charsBeforeFirstWildcard < sLen)
       {
@@ -168,6 +168,47 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
 
             return serviceP;
           }
+        }
+      }
+    }
+    else  // 3 wildcards
+    {
+      if (serviceP->charsBeforeFirstWildcard < sLen)
+      {
+        if (serviceP->charsBeforeFirstWildcardSum == cSumV[serviceP->charsBeforeFirstWildcard - 1])
+        {
+          // wc0 ... matchForSecondWildcard ... wc1 ... matchForThirdWildcard ... wc2
+          char* wc0 = &swRest.in.urlPath[serviceP->charsBeforeFirstWildcard];
+          char* sep1 = strstr(wc0, serviceP->matchForSecondWildcard);
+          if (sep1 == NULL)
+            continue;
+
+          char* wc1 = &sep1[serviceP->matchForSecondWildcardLen];
+          char* sep2 = (serviceP->matchForThirdWildcardLen > 0)
+                       ? strstr(wc1, serviceP->matchForThirdWildcard)
+                       : wc1;
+          if (sep2 == NULL)
+            continue;
+
+          char* wc2 = &sep2[serviceP->matchForThirdWildcardLen];
+
+          // For non-greedy, each wildcard must be single component (no '/').
+          if (!serviceP->greedy)
+          {
+            bool hasSlash = false;
+            for (char* p = wc0; p < sep1; p++) if (*p == '/') { hasSlash = true; break; }
+            for (char* p = wc1; !hasSlash && p < sep2; p++) if (*p == '/') hasSlash = true;
+            for (char* p = wc2; !hasSlash && *p != 0; p++)  if (*p == '/') hasSlash = true;
+            if (hasSlash)
+              continue;
+          }
+
+          *sep1 = 0;
+          *sep2 = 0;
+          swRest.in.wildcard[0] = wc0;
+          swRest.in.wildcard[1] = wc1;
+          swRest.in.wildcard[2] = wc2;
+          return serviceP;
         }
       }
     }

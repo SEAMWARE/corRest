@@ -82,6 +82,8 @@ typedef struct SwRestService
   int                    charsBeforeSecondWildcardSum; // sum of those chars
   char                   matchForSecondWildcard[16];   // pattern between first and second '*'
   int                    matchForSecondWildcardLen;    // length of that pattern
+  char                   matchForThirdWildcard[16];    // pattern between second and third '*'
+  int                    matchForThirdWildcardLen;     // length of that pattern (0 if no third wildcard)
 } SwRestService;
 
 

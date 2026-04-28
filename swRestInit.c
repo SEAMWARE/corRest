@@ -85,10 +85,14 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
   serviceP->charsBeforeSecondWildcardSum  = 0;
   serviceP->matchForSecondWildcardLen     = 0;
   serviceP->matchForSecondWildcard[0]     = 0;
+  serviceP->matchForThirdWildcardLen      = 0;
+  serviceP->matchForThirdWildcard[0]      = 0;
 
-  char*  wildCardStart = NULL;
-  char*  wildCardEnd   = NULL;
-  int    ix            = 0;
+  char*  wildCardStart    = NULL;  // start of literal between *#1 and *#2
+  char*  wildCardEnd      = NULL;  // end of literal between *#1 and *#2
+  char*  thirdWildStart   = NULL;  // start of literal between *#2 and *#3
+  char*  thirdWildEnd     = NULL;  // end of literal between *#2 and *#3
+  int    ix               = 0;
 
   while (serviceP->url[ix] != 0)
   {
@@ -106,7 +110,12 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
       if (serviceP->wildcards == 0)
         wildCardStart = &serviceP->url[ix + 1];
       else if (serviceP->wildcards == 1)
-        wildCardEnd = &serviceP->url[ix];
+      {
+        wildCardEnd    = &serviceP->url[ix];
+        thirdWildStart = &serviceP->url[ix + 1];
+      }
+      else if (serviceP->wildcards == 2)
+        thirdWildEnd = &serviceP->url[ix];
 
       serviceP->wildcards += 1;
       ++ix;
@@ -139,6 +148,21 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
     {
       strncpy(serviceP->matchForSecondWildcard, wildCardStart, serviceP->matchForSecondWildcardLen);
       serviceP->matchForSecondWildcard[serviceP->matchForSecondWildcardLen] = 0;
+    }
+
+    if (serviceP->wildcards >= 3 && thirdWildStart != NULL)
+    {
+      if (thirdWildEnd == NULL)
+        thirdWildEnd = &serviceP->url[ix];
+
+      serviceP->matchForThirdWildcardLen = thirdWildEnd - thirdWildStart;
+
+      if (serviceP->matchForThirdWildcardLen > 0 &&
+          serviceP->matchForThirdWildcardLen < (int) sizeof(serviceP->matchForThirdWildcard))
+      {
+        strncpy(serviceP->matchForThirdWildcard, thirdWildStart, serviceP->matchForThirdWildcardLen);
+        serviceP->matchForThirdWildcard[serviceP->matchForThirdWildcardLen] = 0;
+      }
     }
   }
 }
