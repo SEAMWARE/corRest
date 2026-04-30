@@ -644,6 +644,23 @@ static enum MHD_Result mhdConnectionHandler
     }
   }
 
+  // § 6.3.6 Prefer / Preference-Applied: when the client sent a
+  // "Prefer: ngsi-ld=<x>" header, echo "Preference-Applied: ngsi-ld=<our-version>"
+  // so they know what spec version the response body conforms to.
+  // We respond with our supported version regardless of <x> — full v1.9.1
+  // degradation per § 4.3.6.8 is not implemented.
+  for (int hi = 0; hi < swRest.in.httpHeaderCount; hi++)
+  {
+    if (swRest.in.httpHeaderV[hi].key != NULL &&
+        strcasecmp(swRest.in.httpHeaderV[hi].key, "Prefer") == 0 &&
+        swRest.in.httpHeaderV[hi].value != NULL &&
+        strncasecmp(swRest.in.httpHeaderV[hi].value, "ngsi-ld=", 8) == 0)
+    {
+      MHD_add_response_header(response, "Preference-Applied", "ngsi-ld=1.9.1");
+      break;
+    }
+  }
+
   // Add custom response headers
   for (int i = 0; i < swRest.out.headerCount; i++)
     MHD_add_response_header(response, swRest.out.headerV[i].key, swRest.out.headerV[i].value);
