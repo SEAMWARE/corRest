@@ -623,7 +623,26 @@ static enum MHD_Result mhdConnectionHandler
   );
 
   if (swRest.out.contentType != NULL)
-    MHD_add_response_header(response, "Content-Type", swRest.out.contentType);
+  {
+    // § 6.3.x — append charset=utf-8 to JSON-family Content-Type values.
+    // Skip if the value already carries any parameter (semicolon present)
+    // — caller (e.g. metrics) is in charge of its own qualifiers.
+    const char* ct = swRest.out.contentType;
+    if (strchr(ct, ';') == NULL &&
+        (strncmp(ct, "application/json",     16) == 0 ||
+         strncmp(ct, "application/ld+json",  19) == 0 ||
+         strncmp(ct, "application/geo+json", 20) == 0 ||
+         strncmp(ct, "application/problem+json", 24) == 0))
+    {
+      char ctBuf[64];
+      snprintf(ctBuf, sizeof(ctBuf), "%s; charset=utf-8", ct);
+      MHD_add_response_header(response, "Content-Type", ctBuf);
+    }
+    else
+    {
+      MHD_add_response_header(response, "Content-Type", ct);
+    }
+  }
 
   // Add custom response headers
   for (int i = 0; i < swRest.out.headerCount; i++)
