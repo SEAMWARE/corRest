@@ -50,6 +50,7 @@ extern void swRestSetParamHook(SwRestParamHook fn);
 extern void swRestSetPreServiceHook(SwRestPreServiceHook fn);
 extern void swRestSetPostResponseHook(SwRestHook fn);
 extern void swRestSetPrettySpaces(int spaces);
+extern void swRestSetMaxRequestSize(unsigned long long bytes);
 
 
 

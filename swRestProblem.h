@@ -24,6 +24,7 @@
 #define SW_REST_ERROR_METHOD         "https://uri.etsi.org/ngsi-ld/errors/MethodNotAllowed"
 #define SW_REST_ERROR_ALREADY_EXISTS "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists"
 #define SW_REST_ERROR_UNSUPPORTED    "https://uri.etsi.org/ngsi-ld/errors/UnsupportedMediaType"
+#define SW_REST_ERROR_REQUEST_LENGTH "https://uri.etsi.org/ngsi-ld/errors/RequestEntityTooLarge"
 
 
 

@@ -32,6 +32,7 @@ SwRestParamHook       swRestParamHookF        = NULL;
 SwRestPreServiceHook  swRestPreServiceHookF   = preServiceHookNoop;
 SwRestHook            swRestPostResponseHook  = hookNoop;
 int                   swRestDefaultPrettySpaces = 0;
+unsigned long long    swRestMaxRequestSize    = 2 * 1024 * 1024;  // § 6.3.4 / § 6.3.2 — 413 threshold; default 2 MiB
 
 
 
@@ -114,6 +115,19 @@ void swRestSetPostResponseHook(SwRestHook fn)
 void swRestSetPrettySpaces(int spaces)
 {
   swRestDefaultPrettySpaces = spaces;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestSetMaxRequestSize - § 6.3.2 413 threshold (in bytes).
+//
+// 0 = disable the cap (let MHD's transport-level limits kick in).
+//
+void swRestSetMaxRequestSize(unsigned long long bytes)
+{
+  swRestMaxRequestSize = bytes;
 }
 
 

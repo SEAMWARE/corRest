@@ -63,6 +63,7 @@ extern SwRestHook            swRestPayloadRenderHook;
 extern SwRestParamHook       swRestParamHookF;
 extern SwRestPreServiceHook  swRestPreServiceHookF;
 extern SwRestHook            swRestPostResponseHook;
+extern unsigned long long    swRestMaxRequestSize;
 
 
 
@@ -416,6 +417,35 @@ static enum MHD_Result mhdConnectionHandler
     // Request-start hook
     swRestRequestStartHook();
 
+    // § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry
+    // Content-Length. § 6.3.2 — 413 when the announced body exceeds
+    // the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are
+    // outside the spec's scope and accept bodyless POSTs.
+    if ((swRest.in.verb == SwVerbPost ||
+         swRest.in.verb == SwVerbPut  ||
+         swRest.in.verb == SwVerbPatch) &&
+        url != NULL &&
+        strncmp(url, "/ngsi-ld/", 9) == 0)
+    {
+      const char* clHdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Content-Length");
+      if (clHdr == NULL)
+      {
+        // § 6.3.4 — just a 411 status, no body.
+        swRest.out.httpStatusCode    = 411;
+        swRest.in.contentLengthMissing = true;
+      }
+      else if (swRestMaxRequestSize > 0)
+      {
+        unsigned long long cl = strtoull(clHdr, NULL, 10);
+        if (cl > swRestMaxRequestSize)
+        {
+          swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
+                        "request body of %llu bytes exceeds broker limit of %llu bytes",
+                        cl, swRestMaxRequestSize);
+        }
+      }
+    }
+
     *con_cls = (void*) 1;  // non-NULL marker
     return MHD_YES;
   }
@@ -423,6 +453,24 @@ static enum MHD_Result mhdConnectionHandler
   // --- Middle calls: accumulate payload ---
   if (*uploadDataSize > 0)
   {
+    // If the first-call check flagged 411/413, drop the bytes.
+    if (swRest.in.contentLengthMissing || swRest.out.httpStatusCode == 413)
+    {
+      *uploadDataSize = 0;
+      return MHD_YES;
+    }
+
+    // Streaming size cap — defends against clients that lie in
+    // Content-Length or use chunked encoding without a length.
+    if (swRestMaxRequestSize > 0 &&
+        (unsigned long long)(swRest.in.payloadSize + *uploadDataSize) > swRestMaxRequestSize)
+    {
+      swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
+                    "request body exceeds broker limit of %llu bytes", swRestMaxRequestSize);
+      *uploadDataSize = 0;
+      return MHD_YES;
+    }
+
     int needed = swRest.in.payloadSize + *uploadDataSize + 1;
 
     if (needed > swRest.payloadBufSize)
@@ -444,6 +492,18 @@ static enum MHD_Result mhdConnectionHandler
   }
 
   // --- Final call: parse, dispatch, render, respond ---
+
+  // § 6.3.4 — POST/PATCH/PUT without Content-Length: emit 411 with no
+  // body and skip everything else.
+  if (swRest.in.contentLengthMissing)
+  {
+    swRest.out.httpStatusCode = 411;
+    goto respond;
+  }
+
+  // 413 already set by first-call or middle-call: short-circuit to render.
+  if (swRest.out.problemType != NULL && swRest.out.httpStatusCode == 413)
+    goto respond;
 
   // Parse incoming JSON payload (if any)
   if (swRest.in.payloadSize > 0)
@@ -474,10 +534,44 @@ static enum MHD_Result mhdConnectionHandler
 
   if (swRest.serviceP == NULL)
   {
-    swRestProblem(404, SW_REST_ERROR_NOT_FOUND, "Not Found",
-                  "%s %s is not a recognized resource",
-                  swRest.in.verbString ? swRest.in.verbString : "?",
-                  swRest.in.urlPath    ? swRest.in.urlPath    : "?");
+    // § 6.3.2: 404 ResourceNotFound when the path matches NO route, but
+    // 405 MethodNotAllowed when the path is registered for some other
+    // verb. The Allow: header lists the verbs that ARE allowed on this
+    // path (RFC 7231 § 7.4.1).
+    char allow[128];
+    int  pos = 0;
+    for (int v = 0; v < SwVerbs; v++)
+    {
+      if (v == swRest.in.verb) continue;
+      SwRestService* probe = swRestServiceLookup(&swRestServiceV[v]);
+      if (probe == NULL) continue;
+      if (pos > 0) { allow[pos++] = ','; allow[pos++] = ' '; }
+      const char* vs = swRestVerbToString((SwRestVerb) v);
+      int         vl = strlen(vs);
+      if (pos + vl >= (int) sizeof(allow)) break;
+      memcpy(&allow[pos], vs, vl);
+      pos += vl;
+    }
+    allow[pos] = 0;
+
+    if (pos > 0)
+    {
+      swRest.out.headerV[swRest.out.headerCount].key   = "Allow";
+      swRest.out.headerV[swRest.out.headerCount].value = kaStrdup(&swRest.kalloc, allow);
+      swRest.out.headerCount++;
+      swRestProblem(405, SW_REST_ERROR_METHOD, "Method Not Allowed",
+                    "%s %s — supported methods: %s",
+                    swRest.in.verbString ? swRest.in.verbString : "?",
+                    swRest.in.urlPath    ? swRest.in.urlPath    : "?",
+                    allow);
+    }
+    else
+    {
+      swRestProblem(404, SW_REST_ERROR_NOT_FOUND, "Not Found",
+                    "%s %s is not a recognized resource",
+                    swRest.in.verbString ? swRest.in.verbString : "?",
+                    swRest.in.urlPath    ? swRest.in.urlPath    : "?");
+    }
     goto respond;
   }
 

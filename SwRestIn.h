@@ -8,6 +8,8 @@
 #ifndef SWREST_SW_REST_IN_H_
 #define SWREST_SW_REST_IN_H_
 
+#include <stdbool.h>
+
 #include "kjson/KjNode.h"
 #include "swRest/SwRestVerb.h"
 #include "swRest/SwRestKeyValue.h"
@@ -52,6 +54,10 @@ typedef struct SwRestIn
 
   // Pretty-print indentation (0 = compact, from ?pretty=N)
   int         prettySpaces;
+
+  // § 6.3.4 — set when a POST/PATCH/PUT arrives without Content-Length;
+  // the dispatcher emits a body-less 411 in that case.
+  bool        contentLengthMissing;
 
   // Payload
   char*       payload;
