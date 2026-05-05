@@ -505,6 +505,12 @@ static enum MHD_Result mhdConnectionHandler
   if (swRest.out.problemType != NULL && swRest.out.httpStatusCode == 413)
     goto respond;
 
+  // Lookup service early — the parse hook needs to know the route so it can
+  // tailor validation (e.g. batch ops surface per-element @context errors as
+  // 207 entries instead of a global 400). serviceP may stay NULL here; the
+  // 404/405 handling below still runs in that case.
+  swRest.serviceP = swRestServiceLookup(&swRestServiceV[swRest.in.verb]);
+
   // Parse incoming JSON payload (if any)
   if (swRest.in.payloadSize > 0)
   {
@@ -528,9 +534,6 @@ static enum MHD_Result mhdConnectionHandler
       i--;
     }
   }
-
-  // Lookup service
-  swRest.serviceP = swRestServiceLookup(&swRestServiceV[swRest.in.verb]);
 
   if (swRest.serviceP == NULL)
   {
@@ -588,7 +591,10 @@ static enum MHD_Result mhdConnectionHandler
 
       if (bit == 0 || (bit & swRest.serviceP->supportedParams) == 0)
       {
-        swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request Data",
+        // § 6.3.20: an unknown query parameter is an InvalidRequest, not
+        // BadRequestData (which the spec reserves for semantic errors in
+        // the NGSI-LD payload).
+        swRestProblem(400, SW_REST_ERROR_INVALID_REQ, "Invalid Request",
                       "Unknown/unsupported URL parameter: %s", swRest.in.uriParamV[i].key);
         goto respond;
       }
@@ -602,18 +608,66 @@ static enum MHD_Result mhdConnectionHandler
   if (!swRestPreServiceHookF())
     goto respond;
 
+  // § 5.7.1.6 / § 5.7.2.6 / etc.: when the first path-segment wildcard is an
+  // entity, subscription, registration or entityMap id, it must be a valid
+  // URI — otherwise 400 BadRequestData (not 404 ResourceNotFound).
+  // Routes registered with these prefixes always bind that wildcard to an id.
+  {
+    const char* sp = swRest.serviceP->url;
+    bool needUri =
+      (strncmp(sp, "/ngsi-ld/v1/entities/", 21) == 0) ||
+      (strncmp(sp, "/ngsi-ld/v1/temporal/entities/", 30) == 0) ||
+      (strncmp(sp, "/ngsi-ld/v1/subscriptions/", 26) == 0) ||
+      (strncmp(sp, "/ngsi-ld/v1/csourceRegistrations/", 33) == 0) ||
+      (strncmp(sp, "/ngsi-ld/v1/csourceSubscriptions/", 33) == 0) ||
+      (strncmp(sp, "/ngsi-ld/v1/entityMaps/", 23) == 0);
+
+    if (needUri && swRest.serviceP->wildcards >= 1 && swRest.in.wildcard[0] != NULL)
+    {
+      const char* id    = swRest.in.wildcard[0];
+      const char* colon = strchr(id, ':');
+      bool        ok    = (id[0] != 0) && (colon != NULL) && (colon != id) && (colon[1] != 0);
+
+      if (ok)
+      {
+        for (const char* p = id; *p != 0; p++)
+        {
+          if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+          {
+            ok = false;
+            break;
+          }
+        }
+      }
+
+      if (!ok)
+      {
+        swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request Data",
+                      "'%s' is not a valid URI", id);
+        goto respond;
+      }
+    }
+  }
+
   // Body-presence check for write verbs (POST / PUT / PATCH) on services
-  // that carry an LdOp. Admin endpoints (ldOp == 0) opt out — some are
-  // body-less by design (POST /admin/subStats/flush, etc.).
-  if (swRest.serviceP->ldOp != 0 &&
+  // that carry an LdOp OR live under /ngsi-ld/ (jsonldContexts and
+  // entityMaps have ldOp=0 but still need a body). Admin paths (/admin/,
+  // anything else not under /ngsi-ld/) opt out — some are body-less by
+  // design (POST /admin/subStats/flush, etc.).
+  bool isNgsildPath = (swRest.serviceP->url != NULL &&
+                       strncmp(swRest.serviceP->url, "/ngsi-ld/", 9) == 0);
+  bool needsBody    = (swRest.serviceP->ldOp != 0 || isNgsildPath);
+  if (needsBody &&
       (swRest.in.verb == SwVerbPost  ||
        swRest.in.verb == SwVerbPut   ||
        swRest.in.verb == SwVerbPatch))
   {
     if (swRest.in.payload != NULL && swRest.in.requestTree == NULL)
     {
-      swRestProblem(415, SW_REST_ERROR_INVALID_REQ, "Unsupported Media Type",
-                    "supported Content-Types: application/json, application/ld+json");
+      // Failed JSON parse: per § 4.9 / § 6.3.4 this is InvalidRequest at 400,
+      // not 415 (which is reserved for unsupported Content-Type).
+      swRestProblem(400, SW_REST_ERROR_INVALID_REQ, "Invalid Request",
+                    "request body is not valid JSON");
       goto respond;
     }
     if (swRest.in.requestTree == NULL)
