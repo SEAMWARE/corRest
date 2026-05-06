@@ -70,6 +70,16 @@ void swRestStateInit(struct MHD_Connection* connection, const char* url, const c
 
   swRest.in.urlPathLen = strlen(swRest.in.urlPath);
 
+  // Strip a single trailing '/' from the path (except the root "/" itself).
+  // Routes are registered without a trailing slash; clients that send one
+  // (e.g. ETSI test suite: POST /ngsi-ld/v1/entities/) would otherwise
+  // 404 against an exact-match service lookup.
+  if (swRest.in.urlPathLen > 1 && swRest.in.urlPath[swRest.in.urlPathLen - 1] == '/')
+  {
+    swRest.in.urlPath[swRest.in.urlPathLen - 1] = 0;
+    swRest.in.urlPathLen--;
+  }
+
   // Initialize URI param dynamic array (starts with inline slots)
   swRest.in.uriParamV     = swRest.in.uriParams;
   swRest.in.uriParamCount = 0;
