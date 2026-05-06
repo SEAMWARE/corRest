@@ -14,6 +14,8 @@
 #include <stdbool.h>                             // bool, true, false
 #include <unistd.h>                              // close
 #include <time.h>                                // clock_gettime
+#include <errno.h>                               // errno, EAGAIN, EWOULDBLOCK
+#include <sys/socket.h>                          // recv, MSG_PEEK, MSG_DONTWAIT
 
 #include "swRest/swRestClient.h"                 // SwRestClientConn, SwRestClientPool
 
@@ -172,6 +174,34 @@ void swRestClientPoolDestroy(void)
 
 // -----------------------------------------------------------------------------
 //
+// connIsAlive - peek at the socket; returns false on EOF (peer FIN'd) or
+// any error other than "would-block". A pooled connection that has been
+// half-closed by the remote end will return EOF here, letting us evict it
+// before the caller writes a request and waits the full requestTimeout
+// (typically 10 s) for a recv that never comes.
+//
+static bool connIsAlive(int fd)
+{
+  if (fd < 0)
+    return false;
+
+  char    peek;
+  ssize_t n = recv(fd, &peek, 1, MSG_PEEK | MSG_DONTWAIT);
+
+  if (n == 0)                             // FIN received
+    return false;
+  if (n > 0)                              // data already buffered (stale response)
+    return false;
+  if (errno == EAGAIN || errno == EWOULDBLOCK)
+    return true;                          // alive, no data yet — normal
+
+  return false;                           // any other error: socket is bad
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // swRestClientPoolGet - Get a pooled connection matching host:port:tls
 //
 SwRestClientConn* swRestClientPoolGet(const char* host, unsigned short port, bool tls)
@@ -200,6 +230,17 @@ SwRestClientConn* swRestClientPoolGet(const char* host, unsigned short port, boo
       pool.totalIdle--;
 
       pthread_mutex_unlock(&pool.mutex);
+
+      // Drop the connection on the floor if the peer already closed it —
+      // returning it would make the caller wait the full requestTimeout
+      // for a response that's never coming.
+      if (!connIsAlive(c->fd))
+      {
+        if (c->fd >= 0) close(c->fd);
+        if (c->buf) free(c->buf);
+        free(c);
+        return NULL;
+      }
 
       return c;
     }
