@@ -527,6 +527,14 @@ static enum MHD_Result mhdConnectionHandler
                (ct[16] == 0 || ct[16] == ';' || ct[16] == ' ')) ||
               (strncasecmp(ct, "application/ld+json", 19) == 0 &&
                (ct[19] == 0 || ct[19] == ';' || ct[19] == ' '));
+
+    // PATCH also accepts application/merge-patch+json (RFC 7396 / NGSI-LD
+    // § 5.6.18 Merge / § 5.6.5 Partial Update). Other media types remain 415.
+    if (!ok && swRest.in.verb == SwVerbPatch &&
+        strncasecmp(ct, "application/merge-patch+json", 28) == 0 &&
+        (ct[28] == 0 || ct[28] == ';' || ct[28] == ' '))
+      ok = true;
+
     if (!ok)
     {
       swRest.out.httpStatusCode = 415;
