@@ -511,6 +511,29 @@ static enum MHD_Result mhdConnectionHandler
   // 404/405 handling below still runs in that case.
   swRest.serviceP = swRestServiceLookup(&swRestServiceV[swRest.in.verb]);
 
+  // § 6.3.4 — Unsupported Media Type. POST / PATCH / PUT on a body-bearing
+  // NGSI-LD endpoint with a Content-Type that isn't application/json or
+  // application/ld+json (with or without a charset parameter): 415, body
+  // empty (spec wording: "shall result in just a 415 HTTP status code
+  // (without any payload body)"). Run before the JSON parse so we don't
+  // 400 InvalidRequest on a body that was never meant to be JSON.
+  if (swRest.in.payloadSize > 0 && swRest.in.contentType != NULL &&
+      (swRest.in.verb == SwVerbPost  ||
+       swRest.in.verb == SwVerbPut   ||
+       swRest.in.verb == SwVerbPatch))
+  {
+    const char* ct = swRest.in.contentType;
+    bool ok = (strncasecmp(ct, "application/json",    16) == 0 &&
+               (ct[16] == 0 || ct[16] == ';' || ct[16] == ' ')) ||
+              (strncasecmp(ct, "application/ld+json", 19) == 0 &&
+               (ct[19] == 0 || ct[19] == ';' || ct[19] == ' '));
+    if (!ok)
+    {
+      swRest.out.httpStatusCode = 415;
+      goto respond;
+    }
+  }
+
   // Parse incoming JSON payload (if any)
   if (swRest.in.payloadSize > 0)
   {
