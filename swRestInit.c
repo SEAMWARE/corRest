@@ -717,9 +717,14 @@ static enum MHD_Result mhdConnectionHandler
   // Dispatch to service routine
   swRest.serviceP->serviceRoutine();
 
-  // Call render hook (compaction, etc.) if no error
-  if (swRest.out.problemType == NULL)
-    swRestPayloadRenderHook();
+  // Call render hook unconditionally — the renderHook does the
+  // § 6.3.4 Accept-negotiation 406 check, which must override an
+  // earlier 4xx (e.g. retrieving a non-existent entity with an
+  // unacceptable Accept header should answer 406, not 404).
+  // The hook short-circuits its body-formatting work when problemType
+  // is already set, so the only effect on the error path is the 406
+  // check at the top.
+  swRestPayloadRenderHook();
 
   // If service set a problem type but forgot status code, default to 500
   if (swRest.out.httpStatusCode == 200 && swRest.out.problemType != NULL)
