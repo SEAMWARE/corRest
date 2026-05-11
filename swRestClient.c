@@ -40,6 +40,17 @@ static const char* clientUserAgent = "swRest/1.0";
 
 // -----------------------------------------------------------------------------
 //
+// swRestClientDefaultRequestTimeoutMs - boot-time default for every client
+// request that doesn't call swRestClientRequestTimeout explicitly. swBroker
+// exposes this via the --distOpTimeout/-dtmo CLI flag; ETSI runs can dial
+// it down to skip the 10 s wait per unmatched HttpCtrl stub forward.
+//
+int swRestClientDefaultRequestTimeoutMs = 5000;
+
+
+
+// -----------------------------------------------------------------------------
+//
 // swRestClientInit - Initialize the client subsystem
 //
 int swRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent)
@@ -158,7 +169,7 @@ void swRestClientRequestInit(SwRestClientRequest* req, SwRestVerb verb, const ch
   req->headerV          = req->headers;
   req->headerSize       = SW_REST_INITIAL_KV_SLOTS;
   req->connectTimeoutMs = 5000;
-  req->requestTimeoutMs = 10000;
+  req->requestTimeoutMs = swRestClientDefaultRequestTimeoutMs;
   req->maxRedirects     = 5;
   req->allocP           = allocP;
 }

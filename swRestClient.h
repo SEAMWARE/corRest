@@ -155,6 +155,13 @@ typedef struct SwRestClientMulti SwRestClientMulti;
 extern int   swRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
 extern void  swRestClientCleanup(void);
 
+// Default per-request timeout used by swRestClientRequestInit when the
+// caller doesn't override it via swRestClientRequestTimeout. Settable at
+// boot (e.g. via swBroker's --distOpTimeout/-dtmo CLI flag); applies to
+// every HTTP-client call the broker makes (distop forwards, subscription
+// notifications, JSON-LD context downloads, …).
+extern int   swRestClientDefaultRequestTimeoutMs;
+
 
 
 // -----------------------------------------------------------------------------
