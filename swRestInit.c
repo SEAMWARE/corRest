@@ -568,6 +568,20 @@ static enum MHD_Result mhdConnectionHandler
 
   if (swRest.serviceP == NULL)
   {
+    // Empty path segment (`//` somewhere in the path) almost always
+    // means the client URL-built the path with an empty variable in a
+    // wildcard slot — `/entities//attrs` is "POST attrs on entity id
+    // <empty>". Surface this as 400 BadRequestData rather than 404
+    // ResourceNotFound: there's no route the path could have matched,
+    // but the request is malformed, not pointing at the wrong place.
+    if (swRest.in.urlPath != NULL && strstr(swRest.in.urlPath, "//") != NULL)
+    {
+      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request",
+                    "empty path segment in '%s' (likely a missing URL "
+                    "variable)", swRest.in.urlPath);
+      goto respond;
+    }
+
     // § 6.3.2: 404 ResourceNotFound when the path matches NO route, but
     // 405 MethodNotAllowed when the path is registered for some other
     // verb. The Allow: header lists the verbs that ARE allowed on this
