@@ -209,9 +209,13 @@ static int buildSendBuf(SwcMultiEntry* entry)
   if (n < 0 || n >= end - p) { free(buf); return -1; }
   p += n;
 
-  if (p + 26 > end) { free(buf); return -1; }
-  memcpy(p, "User-Agent: swRest/1.0\r\n", 25);
-  p += 25;
+  {
+    static const char uaLine[] = "User-Agent: swRest/1.0\r\n";
+    int uaLen = (int) (sizeof(uaLine) - 1);
+    if (p + uaLen > end) { free(buf); return -1; }
+    memcpy(p, uaLine, uaLen);
+    p += uaLen;
+  }
 
   for (int i = 0; i < req->headerCount; i++)
   {
@@ -468,7 +472,7 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
     if (startConnect(entry) != 0)
     {
       entry->resp.error = SWC_ERR_CONNECT;
-      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connect failed");
+      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
       entry->state = SwcStateDone;
       multi->done++;
       continue;
@@ -501,7 +505,7 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
         if (entry->state != SwcStateDone)
         {
           entry->resp.error = SWC_ERR_TIMEOUT;
-          snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Timeout");
+          snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Request timeout");
           entry->state = SwcStateDone;
           multi->done++;
         }
@@ -532,6 +536,7 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
           if (finishConnect(entry) != 0)
           {
             entry->resp.error = SWC_ERR_CONNECT;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
             entry->state = SwcStateDone;
             multi->done++;
             break;
@@ -577,6 +582,7 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
               if (startConnect(entry) != 0)
               {
                 entry->resp.error = SWC_ERR_CONNECT;
+                snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
                 entry->state = SwcStateDone;
                 multi->done++;
                 break;
@@ -667,6 +673,7 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
               if (startConnect(entry) != 0)
               {
                 entry->resp.error = SWC_ERR_CONNECT;
+                snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
                 entry->state = SwcStateDone;
                 multi->done++;
                 break;
