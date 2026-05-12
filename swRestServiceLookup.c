@@ -5,11 +5,38 @@
 //
 // Copyright 2026 Seamware
 //
+#include <stdbool.h>                         // bool
 #include <string.h>                          // strcmp, strncmp, strstr, strchr
 
 #include "swRest/SwRestState.h"              // swRest
 #include "swRest/SwRestService.h"            // SwRestService, SwRestServiceVector
 #include "swRest/swRestServiceLookup.h"      // Own interface
+
+
+
+// -----------------------------------------------------------------------------
+//
+// isUrlForm - true if [s..end) starts with "<scheme>://" (RFC 3986 § 3.1)
+//
+// Used to let non-greedy wildcards accept URL-form NGSI-LD identifiers
+// (https://..., http://...) in a single path segment. URN-form (urn:...)
+// has no embedded '/' so passes the plain slash-check already; this only
+// matters for the URL flavor of an entity / attribute / context id.
+//
+static bool isUrlForm(const char* s, const char* end)
+{
+  if (s == NULL || end == NULL || end - s < 4) return false;
+  if (s[0] < 'a' || s[0] > 'z') return false;
+
+  const char* p = s + 1;
+  while (p < end &&
+         ((*p >= 'a' && *p <= 'z') ||
+          (*p >= '0' && *p <= '9') ||
+          *p == '+' || *p == '.' || *p == '-'))
+    p++;
+
+  return (p + 2 < end) && p[0] == ':' && p[1] == '/' && p[2] == '/';
+}
 
 
 
@@ -94,10 +121,11 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
               {
                 char* wildcardValue = &swRest.in.urlPath[serviceP->charsBeforeFirstWildcard];
 
-                // For non-greedy *, wildcard must not contain '/' (single component only)
+                // For non-greedy *, wildcard must not contain '/' (single component only).
+                // Exception: URL-form identifiers (scheme://...) are accepted as one segment
+                // because NGSI-LD ids may be full URLs (§ 4.3.2 / § 4.6.2).
                 if (!serviceP->greedy)
                 {
-                  // Check that the wildcard portion has no '/' in it
                   int wildcardLen = endIndex - serviceP->charsBeforeFirstWildcard;
                   bool hasSlash = false;
                   for (int j = 0; j < wildcardLen; j++)
@@ -108,7 +136,7 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
                       break;
                     }
                   }
-                  if (hasSlash)
+                  if (hasSlash && !isUrlForm(wildcardValue, wildcardValue + wildcardLen))
                     continue;  // Not a match for single-component wildcard
                 }
 
@@ -122,8 +150,12 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
               // Wildcard at the end: /prefix/*
               char* wildcardValue = &swRest.in.urlPath[serviceP->charsBeforeFirstWildcard];
 
-              // For non-greedy *, wildcard must not contain '/'
-              if (!serviceP->greedy && strchr(wildcardValue, '/') != NULL)
+              // For non-greedy *, wildcard must not contain '/' — unless the
+              // value is URL-form (scheme://...), which counts as one segment
+              // per § 4.3.2 / § 4.6.2 (URI ids may be URLs).
+              if (!serviceP->greedy &&
+                  strchr(wildcardValue, '/') != NULL &&
+                  !isUrlForm(wildcardValue, wildcardValue + strlen(wildcardValue)))
                 continue;
 
               swRest.in.wildcard[0] = wildcardValue;
@@ -146,7 +178,8 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
             char* wc0 = &swRest.in.urlPath[serviceP->charsBeforeFirstWildcard];
             char* wc1 = &matchP[serviceP->matchForSecondWildcardLen];
 
-            // For non-greedy, first wildcard must be single component (no '/')
+            // For non-greedy, first wildcard must be single component (no '/'),
+            // unless it's URL-form (scheme://...).
             if (!serviceP->greedy)
             {
               bool hasSlash = false;
@@ -158,7 +191,7 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
                   break;
                 }
               }
-              if (hasSlash)
+              if (hasSlash && !isUrlForm(wc0, matchP))
                 continue;
             }
 
@@ -192,14 +225,32 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
 
           char* wc2 = &sep2[serviceP->matchForThirdWildcardLen];
 
-          // For non-greedy, each wildcard must be single component (no '/').
+          // For non-greedy, each wildcard must be single component (no '/'),
+          // unless that wildcard is URL-form (scheme://...).
           if (!serviceP->greedy)
           {
-            bool hasSlash = false;
-            for (char* p = wc0; p < sep1; p++) if (*p == '/') { hasSlash = true; break; }
-            for (char* p = wc1; !hasSlash && p < sep2; p++) if (*p == '/') hasSlash = true;
-            for (char* p = wc2; !hasSlash && *p != 0; p++)  if (*p == '/') hasSlash = true;
-            if (hasSlash)
+            bool reject = false;
+            // Wildcard 0 (wc0..sep1)
+            bool s0 = false;
+            for (char* p = wc0; p < sep1; p++) if (*p == '/') { s0 = true; break; }
+            if (s0 && !isUrlForm(wc0, sep1)) reject = true;
+            // Wildcard 1 (wc1..sep2)
+            if (!reject)
+            {
+              bool s1 = false;
+              for (char* p = wc1; p < sep2; p++) if (*p == '/') { s1 = true; break; }
+              if (s1 && !isUrlForm(wc1, sep2)) reject = true;
+            }
+            // Wildcard 2 (wc2..end)
+            if (!reject)
+            {
+              char* wc2end = wc2;
+              while (*wc2end != 0) wc2end++;
+              bool s2 = false;
+              for (char* p = wc2; p < wc2end; p++) if (*p == '/') { s2 = true; break; }
+              if (s2 && !isUrlForm(wc2, wc2end)) reject = true;
+            }
+            if (reject)
               continue;
           }
 
