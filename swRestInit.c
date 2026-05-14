@@ -717,7 +717,8 @@ static enum MHD_Result mhdConnectionHandler
     }
     if (swRest.in.requestTree == NULL)
     {
-      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request", "no payload");
+      // § 5.5.4: an empty body is "not a valid JSON document" → InvalidRequest.
+      swRestProblem(400, SW_REST_ERROR_INVALID_REQ, "Invalid Request", "no payload");
       goto respond;
     }
   }
