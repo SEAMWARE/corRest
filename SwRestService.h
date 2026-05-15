@@ -74,6 +74,7 @@ typedef struct SwRestService
   SwRestServiceRoutine   serviceRoutine;               // Function pointer
   uint64_t               supportedParams;              // bitmask of accepted URL parameters
   uint64_t               ldOp;                         // LdOp bit (copied from SwRestServiceSimplified at init)
+  uint64_t               options;                      // opaque bitmask the embedding library fills via swRestServiceInitHook
   int                    wildcards;                    // 0, 1, or 2+
   bool                   greedy;                       // true if last wildcard is ** (matches multiple components)
   int                    charsBeforeFirstWildcard;     // length of fixed prefix before first '*'

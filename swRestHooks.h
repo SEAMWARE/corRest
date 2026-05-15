@@ -41,6 +41,18 @@ typedef bool (*SwRestPreServiceHook)(void);
 
 // -----------------------------------------------------------------------------
 //
+// SwRestServiceInitHook - called once per expanded SwRestService at init time
+// so the embedding library (e.g. swNgsild) can populate service->options with
+// per-route flags derived from the URL pattern. Per-request validation then
+// reads the cached bits instead of re-scanning the URL on every call.
+//
+struct SwRestService;
+typedef void (*SwRestServiceInitHook)(struct SwRestService* service);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void swRestSetRequestStartHook(SwRestHook fn);
@@ -48,6 +60,7 @@ extern void swRestSetPayloadParseHook(SwRestHook fn);
 extern void swRestSetPayloadRenderHook(SwRestHook fn);
 extern void swRestSetParamHook(SwRestParamHook fn);
 extern void swRestSetPreServiceHook(SwRestPreServiceHook fn);
+extern void swRestSetServiceInitHook(SwRestServiceInitHook fn);
 extern void swRestSetPostResponseHook(SwRestHook fn);
 extern void swRestSetPrettySpaces(int spaces);
 extern void swRestSetMaxRequestSize(unsigned long long bytes);

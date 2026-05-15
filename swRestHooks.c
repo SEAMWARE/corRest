@@ -31,6 +31,7 @@ SwRestHook            swRestPayloadRenderHook = hookNoop;
 SwRestParamHook       swRestParamHookF        = NULL;
 SwRestPreServiceHook  swRestPreServiceHookF   = preServiceHookNoop;
 SwRestHook            swRestPostResponseHook  = hookNoop;
+SwRestServiceInitHook swRestServiceInitHookF  = NULL;
 int                   swRestDefaultPrettySpaces = 0;
 unsigned long long    swRestMaxRequestSize    = 2 * 1024 * 1024;  // § 6.3.4 / § 6.3.2 — 413 threshold; default 2 MiB
 
@@ -87,6 +88,17 @@ void swRestSetParamHook(SwRestParamHook fn)
 void swRestSetPreServiceHook(SwRestPreServiceHook fn)
 {
   swRestPreServiceHookF = (fn != NULL) ? fn : preServiceHookNoop;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestSetServiceInitHook -
+//
+void swRestSetServiceInitHook(SwRestServiceInitHook fn)
+{
+  swRestServiceInitHookF = fn;
 }
 
 

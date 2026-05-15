@@ -62,6 +62,7 @@ extern SwRestHook            swRestPayloadParseHook;
 extern SwRestHook            swRestPayloadRenderHook;
 extern SwRestParamHook       swRestParamHookF;
 extern SwRestPreServiceHook  swRestPreServiceHookF;
+extern SwRestServiceInitHook swRestServiceInitHookF;
 extern SwRestHook            swRestPostResponseHook;
 extern unsigned long long    swRestMaxRequestSize;
 
@@ -77,6 +78,7 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
   serviceP->serviceRoutine   = simpleP->serviceRoutine;
   serviceP->supportedParams  = simpleP->supportedParams;
   serviceP->ldOp             = simpleP->ldOp;
+  serviceP->options          = 0;     // embedder fills via swRestServiceInitHookF below
   serviceP->wildcards        = 0;
   serviceP->greedy           = false;
 
@@ -166,6 +168,11 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
       }
     }
   }
+
+  // Let the embedding library (swNgsild) inspect the URL pattern and set
+  // any per-route options it cares about. Called once per service at init.
+  if (swRestServiceInitHookF != NULL)
+    swRestServiceInitHookF(serviceP);
 }
 
 
@@ -653,46 +660,8 @@ static enum MHD_Result mhdConnectionHandler
   if (!swRestPreServiceHookF())
     goto respond;
 
-  // § 5.7.1.6 / § 5.7.2.6 / etc.: when the first path-segment wildcard is an
-  // entity, subscription, registration or entityMap id, it must be a valid
-  // URI — otherwise 400 BadRequestData (not 404 ResourceNotFound).
-  // Routes registered with these prefixes always bind that wildcard to an id.
-  {
-    const char* sp = swRest.serviceP->url;
-    bool needUri =
-      (strncmp(sp, "/ngsi-ld/v1/entities/", 21) == 0) ||
-      (strncmp(sp, "/ngsi-ld/v1/temporal/entities/", 30) == 0) ||
-      (strncmp(sp, "/ngsi-ld/v1/subscriptions/", 26) == 0) ||
-      (strncmp(sp, "/ngsi-ld/v1/csourceRegistrations/", 33) == 0) ||
-      (strncmp(sp, "/ngsi-ld/v1/csourceSubscriptions/", 33) == 0) ||
-      (strncmp(sp, "/ngsi-ld/v1/entityMaps/", 23) == 0);
-
-    if (needUri && swRest.serviceP->wildcards >= 1 && swRest.in.wildcard[0] != NULL)
-    {
-      const char* id    = swRest.in.wildcard[0];
-      const char* colon = strchr(id, ':');
-      bool        ok    = (id[0] != 0) && (colon != NULL) && (colon != id) && (colon[1] != 0);
-
-      if (ok)
-      {
-        for (const char* p = id; *p != 0; p++)
-        {
-          if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
-          {
-            ok = false;
-            break;
-          }
-        }
-      }
-
-      if (!ok)
-      {
-        swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request Data",
-                      "'%s' is not a valid URI", id);
-        goto respond;
-      }
-    }
-  }
+  // Wildcard semantic validation (entity/sub/reg/ctx ids, attr name, instance
+  // id) belongs to the NGSI-LD layer — swNgsild's preServiceHook does it.
 
   // Body-presence check for write verbs (POST / PUT / PATCH) on services
   // that carry an LdOp OR live under /ngsi-ld/ (jsonldContexts and
