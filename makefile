@@ -50,7 +50,7 @@ SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../klog -L../ktrace -L../kpr
 SO_LIBS       = -lkalloc -lkjson -lkbase -lklog -lktrace -lkprom -lmicrohttpd -lssl -lcrypto -lpthread
 SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../kjson:$$ORIGIN/../kbase:$$ORIGIN/../klog:$$ORIGIN/../ktrace:$$ORIGIN/../kprom'
 
-LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../kbase/libkbase.a ../klog/libklog.a ../ktrace/libktrace.a ../kprom/libkprom.a -lmicrohttpd -lssl -lcrypto -lpthread
+LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../kbase/libkbase.a ../klog/libklog.a ../ktrace/libktrace.a ../kprom/libkprom.a -lmicrohttpd -lssl -lcrypto -lpthread -lm
 
 all: $(LIB_SO) $(LIB) $(TEST)
 
