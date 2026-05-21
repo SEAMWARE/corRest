@@ -717,13 +717,17 @@ static enum MHD_Result mhdConnectionHandler
  respond:
   ;
 
-  // Build problem details response tree if needed
+  // Build problem details response tree if needed (RFC 7807 / § 5.2.16).
+  // `status` SHOULD carry the HTTP status code — clients (e.g. the ETSI
+  // testsuite's `${response.json()['errors'][0]['error']['status']}`
+  // accessor) rely on it.
   if (swRest.out.problemType != NULL && swRest.out.responseTree == NULL)
   {
     swRest.out.responseTree = kjObject(swRest.kjsonP, NULL);
-    kjChildAdd(swRest.out.responseTree, kjString(swRest.kjsonP, "type",   swRest.out.problemType));
-    kjChildAdd(swRest.out.responseTree, kjString(swRest.kjsonP, "title",  swRest.out.problemTitle));
-    kjChildAdd(swRest.out.responseTree, kjString(swRest.kjsonP, "detail", swRest.out.problemDetail));
+    kjChildAdd(swRest.out.responseTree, kjString (swRest.kjsonP, "type",   swRest.out.problemType));
+    kjChildAdd(swRest.out.responseTree, kjString (swRest.kjsonP, "title",  swRest.out.problemTitle));
+    kjChildAdd(swRest.out.responseTree, kjInteger(swRest.kjsonP, "status", swRest.out.httpStatusCode));
+    kjChildAdd(swRest.out.responseTree, kjString (swRest.kjsonP, "detail", swRest.out.problemDetail));
   }
 
   // Render response tree to JSON
