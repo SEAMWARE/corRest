@@ -464,6 +464,8 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
     if (buildSendBuf(entry) != 0)
     {
       entry->resp.error = SWC_ERR_ALLOC;
+      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+               "Failed to build send buffer");
       entry->state = SwcStateDone;
       multi->done++;
       continue;
@@ -596,6 +598,8 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
             }
 
             entry->resp.error = SWC_ERR_SEND;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                     "send() failed (errno=%d %s)", errno, strerror(errno));
             entry->state = SwcStateDone;
             multi->done++;
             break;
@@ -625,6 +629,8 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
             if (newBuf == NULL)
             {
               entry->resp.error = SWC_ERR_ALLOC;
+              snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                       "Failed to grow recv buffer (size=%d)", newSize);
               entry->state = SwcStateDone;
               multi->done++;
               break;
@@ -687,6 +693,21 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
             }
 
             entry->resp.error = (n == 0) ? SWC_ERR_CLOSED : SWC_ERR_RECV;
+            // include the head of the buffer (CR/LF replaced with | and ~)
+            // so the trace stays single-line yet shows HTTP framing.
+            char buf[256];
+            int  dumpLen = conn->bufLen < 200 ? conn->bufLen : 200;
+            int  j = 0;
+            for (int k = 0; k < dumpLen && j < (int)sizeof(buf)-1; k++)
+            {
+              char c = conn->buf[k];
+              buf[j++] = (c == '\r') ? '|' : (c == '\n') ? '~' : c;
+            }
+            buf[j] = 0;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                     "%s (n=%d, errno=%d %s, bufLen=%d, head=%s)",
+                     (n == 0) ? "Connection closed by peer" : "recv() failed",
+                     n, errno, strerror(errno), conn->bufLen, buf);
             entry->state = SwcStateDone;
             multi->done++;
             break;
@@ -706,6 +727,8 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
             else
             {
               entry->resp.error = SWC_ERR_PARSE;
+              snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                       "Failed to parse response");
               entry->state = SwcStateDone;
               multi->done++;
             }
@@ -713,6 +736,8 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
           else if (cr < 0)
           {
             entry->resp.error = SWC_ERR_PARSE;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                     "Malformed HTTP framing");
             entry->state = SwcStateDone;
             multi->done++;
           }
