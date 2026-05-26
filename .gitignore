@@ -16,3 +16,5 @@ plugins/
 *.stderr
 swRestTest
 *.d
+*.gcno
+*.gcda
