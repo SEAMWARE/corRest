@@ -796,24 +796,11 @@ static enum MHD_Result mhdConnectionHandler
 
   if (swRest.out.contentType != NULL)
   {
-    // § 6.3.x — append charset=utf-8 to JSON-family Content-Type values.
-    // Skip if the value already carries any parameter (semicolon present)
-    // — caller (e.g. metrics) is in charge of its own qualifiers.
-    const char* ct = swRest.out.contentType;
-    if (strchr(ct, ';') == NULL &&
-        (strncmp(ct, "application/json",     16) == 0 ||
-         strncmp(ct, "application/ld+json",  19) == 0 ||
-         strncmp(ct, "application/geo+json", 20) == 0 ||
-         strncmp(ct, "application/problem+json", 24) == 0))
-    {
-      char ctBuf[64];
-      snprintf(ctBuf, sizeof(ctBuf), "%s; charset=utf-8", ct);
-      MHD_add_response_header(response, "Content-Type", ctBuf);
-    }
-    else
-    {
-      MHD_add_response_header(response, "Content-Type", ct);
-    }
+    // TS 104-176 specifies bare media types throughout (§ 6.2.3, § 6.3.3,
+    // § 6.4.7.2 "exactly equal to the media type"); RFC 8259 defines no charset
+    // parameter for application/json. So emit the Content-Type verbatim — no
+    // charset is appended. Callers (e.g. metrics) own any qualifier they set.
+    MHD_add_response_header(response, "Content-Type", swRest.out.contentType);
   }
 
   // § 6.3.6 Prefer / Preference-Applied: when the client sent a
