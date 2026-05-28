@@ -692,6 +692,23 @@ int swRestClientMultiPerform(SwRestClientMulti* multi, int timeoutMs)
               break;
             }
 
+            // Peer closed cleanly (n == 0): for HTTP/1.0-with-Connection-close
+            // framing (no Content-Length, no chunked) EOF is the legitimate
+            // body terminator — what's in the buffer IS the complete response.
+            // Try to parse it before declaring an error; if the parser
+            // succeeds (it knows about the !keepAlive case), succeed too.
+            if (n == 0 && conn->bufLen > 0)
+            {
+              int pr = swRestClientParseResponse(conn, &entry->resp, entry->allocP);
+              if (pr == 0)
+              {
+                entry->state = SwcStateDone;
+                multi->done++;
+                break;
+              }
+              // pr != 0 → genuinely truncated/malformed; fall through to error
+            }
+
             entry->resp.error = (n == 0) ? SWC_ERR_CLOSED : SWC_ERR_RECV;
             // include the head of the buffer (CR/LF replaced with | and ~)
             // so the trace stays single-line yet shows HTTP framing.
