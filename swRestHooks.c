@@ -25,7 +25,7 @@ static bool preServiceHookNoop(void) { return true; }
 //
 // Globals (accessed from swRestInit.c during request handling)
 //
-SwRestHook            swRestRequestStartHook  = hookNoop;
+SwRestHook            swRestPreDispatchHook   = hookNoop;
 SwRestHook            swRestPayloadParseHook  = hookNoop;
 SwRestHook            swRestPayloadRenderHook = hookNoop;
 SwRestParamHook       swRestParamHookF        = NULL;
@@ -39,11 +39,17 @@ unsigned long long    swRestMaxRequestSize    = 2 * 1024 * 1024;  // § 6.3.4 / 
 
 // -----------------------------------------------------------------------------
 //
-// swRestSetRequestStartHook -
+// swRestSetPreDispatchHook -
 //
-void swRestSetRequestStartHook(SwRestHook fn)
+// Fires once per request at the START of dispatch (the final MHD callback,
+// just before the request is parsed and routed) — NOT at first-byte. That
+// keeps the application's per-request state reset, populate and read all
+// inside the atomic dispatch, so the epoll pool interleaving another request
+// between this one's body-read callbacks can't leave stale state behind.
+//
+void swRestSetPreDispatchHook(SwRestHook fn)
 {
-  swRestRequestStartHook = (fn != NULL) ? fn : hookNoop;
+  swRestPreDispatchHook = (fn != NULL) ? fn : hookNoop;
 }
 
 

@@ -57,7 +57,7 @@ void swRestMetricsSet(SwRestMetrics* metrics)
 //
 // Hook globals (defined in swRestHooks.c)
 //
-extern SwRestHook            swRestRequestStartHook;
+extern SwRestHook            swRestPreDispatchHook;
 extern SwRestHook            swRestPayloadParseHook;
 extern SwRestHook            swRestPayloadRenderHook;
 extern SwRestParamHook       swRestParamHookF;
@@ -432,9 +432,6 @@ static enum MHD_Result mhdConnectionHandler
     // Collect URI query parameters from MHD (already percent-decoded by MHD)
     MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, mhdUriParamIterator, NULL);
 
-    // Request-start hook
-    swRestRequestStartHook();
-
     // § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry
     // Content-Length. § 6.3.2 — 413 when the announced body exceeds
     // the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are
@@ -514,6 +511,14 @@ static enum MHD_Result mhdConnectionHandler
   }
 
   // --- Final call: parse, dispatch, render, respond ---
+
+  // Pre-dispatch hook: reset per-request application state (e.g. swNgsild)
+  // HERE, at the start of the atomic dispatch — not at first-byte. With the
+  // epoll pool another connection's request may run on this thread between
+  // our first and final callbacks; resetting at dispatch keeps that state's
+  // reset/populate/read all inside this atomic dispatch, so no stale values
+  // leak in. (The whole final call runs without yielding to the pool.)
+  swRestPreDispatchHook();
 
   // § 6.3.4 — POST/PATCH/PUT without Content-Length: emit 411 with no
   // body and skip everything else.

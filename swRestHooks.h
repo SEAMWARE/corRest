@@ -55,7 +55,7 @@ typedef void (*SwRestServiceInitHook)(struct SwRestService* service);
 //
 // Hook setters
 //
-extern void swRestSetRequestStartHook(SwRestHook fn);
+extern void swRestSetPreDispatchHook(SwRestHook fn);
 extern void swRestSetPayloadParseHook(SwRestHook fn);
 extern void swRestSetPayloadRenderHook(SwRestHook fn);
 extern void swRestSetParamHook(SwRestParamHook fn);
