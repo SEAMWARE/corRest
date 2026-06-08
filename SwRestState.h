@@ -62,8 +62,26 @@ typedef struct SwRestState
 
 // -----------------------------------------------------------------------------
 //
-// swRest - the thread-local state variable
+// swRest - per-request state, reached through a thread-local pointer
 //
-extern __thread SwRestState swRest;
+// Historically `swRest` was a plain __thread object. It is now a __thread
+// POINTER (swRestP) behind the `swRest` macro, so the state can later be
+// relocated off the thread (into MHD per-connection con_cls) without touching
+// the ~2000 `swRest.foo` call sites. Until a request handler binds swRestP to
+// a connection's state, swRestBind() auto-binds it to a per-thread fallback
+// object — making every access crash-proof and, for now, behaviourally
+// identical to the old __thread object (still exactly one state per thread).
+//
+extern __thread SwRestState  swRestFallback;   // per-thread fallback storage
+extern __thread SwRestState* swRestP;          // current state (NULL until first bound)
+
+static inline SwRestState* swRestBind(void)
+{
+  if (swRestP == NULL)
+    swRestP = &swRestFallback;
+  return swRestP;
+}
+
+#define swRest (*swRestBind())
 
 #endif  // SWREST_SW_REST_STATE_H_

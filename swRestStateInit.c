@@ -20,9 +20,12 @@
 
 // -----------------------------------------------------------------------------
 //
-// swRest - the thread-local state variable
+// swRest backing storage — the per-thread fallback object and the current-
+// state pointer the `swRest` macro dereferences (see SwRestState.h). swRestP
+// stays NULL until first access on a thread, then auto-binds to swRestFallback.
 //
-__thread SwRestState swRest;
+__thread SwRestState  swRestFallback;
+__thread SwRestState* swRestP = NULL;
 
 
 
