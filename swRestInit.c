@@ -401,9 +401,20 @@ static enum MHD_Result mhdConnectionHandler
   void**                 con_cls
 )
 {
-  // --- First call: initialize thread-local state ---
+  // --- First call: allocate this connection's per-request state ---
   if (*con_cls == NULL)
   {
+    // Each connection owns its SwRestState (hung on con_cls), so when the
+    // epoll pool thread interleaves connection B's callbacks between
+    // connection A's body-read callbacks it can no longer clobber A's state.
+    // swRestP is bound to it before swRestStateInit (whose memset/init runs
+    // through the swRest macro).
+    SwRestState* conP = (SwRestState*) malloc(sizeof(SwRestState));
+    if (conP == NULL)
+      return MHD_NO;
+    *con_cls = conP;
+    swRestP  = conP;
+
     swRestStateInit(connection, url, method);
 
     // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
@@ -453,9 +464,13 @@ static enum MHD_Result mhdConnectionHandler
       }
     }
 
-    *con_cls = (void*) 1;  // non-NULL marker
     return MHD_YES;
   }
+
+  // Subsequent calls (body chunks, final dispatch): rebind swRestP to THIS
+  // connection's state — another connection's callback may have re-pointed
+  // swRestP on this pool thread since our last invocation here.
+  swRestP = (SwRestState*) *con_cls;
 
   // --- Middle calls: accumulate payload ---
   if (*uploadDataSize > 0)
@@ -901,6 +916,10 @@ static void mhdRequestCompleted
 {
   if (*con_cls != NULL)
   {
+    // Bind to this connection's state before the hook / release touch swRest.
+    SwRestState* conP = (SwRestState*) *con_cls;
+    swRestP = conP;
+
     // Run post-response hook BEFORE releasing the per-request arena so the
     // hook can still touch arena-allocated data (e.g. deferred notification
     // dispatch reading the entity tree built by the service routine).
@@ -911,7 +930,10 @@ static void mhdRequestCompleted
     swRest.in.payload = NULL;
 
     swRestStateRelease();
+
+    free(conP);
     *con_cls = NULL;
+    swRestP  = NULL;   // no dangling pointer to freed state on this thread
   }
 }
 
