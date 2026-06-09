@@ -9,6 +9,7 @@
 #define SWREST_SW_REST_STATE_H_
 
 #include <microhttpd.h>
+#include <stdbool.h>
 
 #include "kalloc/KAlloc.h"
 #include "kjson/kjson.h"
@@ -56,6 +57,12 @@ typedef struct SwRestState
 
   // User-defined context
   void*                   userData;
+
+  // Async worker pool (6d). The I/O thread suspends the connection and enqueues
+  // this state; a worker runs swRestProcessRequest off the I/O thread, sets
+  // asyncProcessed, and resumes the connection. asyncNext links the FIFO queue.
+  bool                    asyncProcessed;
+  struct SwRestState*     asyncNext;
 } SwRestState;
 
 

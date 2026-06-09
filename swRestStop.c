@@ -19,6 +19,7 @@
 //
 extern SwRestServiceVector   swRestServiceV[];
 extern struct MHD_Daemon*    swRestDaemon;
+extern void                  swRestWorkerPoolStop(void);
 
 
 
@@ -28,6 +29,11 @@ extern struct MHD_Daemon*    swRestDaemon;
 //
 void swRestStop(void)
 {
+  // Drain + join the async worker pool BEFORE stopping the daemon: this clears
+  // any suspended connections (resuming across MHD_stop_daemon is an API
+  // violation) and stops new suspensions.
+  swRestWorkerPoolStop();
+
   if (swRestDaemon != NULL)
   {
     MHD_stop_daemon(swRestDaemon);

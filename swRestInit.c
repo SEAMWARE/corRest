@@ -9,6 +9,7 @@
 #include <string.h>                     // strncpy, strstr, strcmp, memcpy, strcasecmp, strlen
 #include <stdio.h>                      // fprintf, snprintf
 #include <time.h>                       // clock_gettime, CLOCK_MONOTONIC
+#include <pthread.h>                    // pthread_* (async worker pool)
 
 #include <microhttpd.h>
 
@@ -851,6 +852,143 @@ int swRestProcessInProcess(SwRestVerb       verb,
 
 // -----------------------------------------------------------------------------
 //
+// -----------------------------------------------------------------------------
+//
+// Async worker pool (6d)
+//
+// The MHD I/O threads accept, parse headers and accumulate the body, then
+// suspend the connection and hand its SwRestState to this pool. A worker binds
+// swRestP to that state and runs the (potentially slow: DB, distops) dispatch
+// off the I/O thread, then resumes the connection — MHD re-invokes the handler,
+// which sends the already-built response. This decouples per-request processing
+// latency from epoll I/O throughput: a slow request no longer blocks the I/O
+// thread from servicing every other connection pinned to it.
+//
+// All request state lives in the per-connection SwRestState (arena, kjson,
+// in/out, userData -> per-conn swNgsild), so a worker needs nothing but
+// `swRestP = conP` — the I/O thread already ran swRestStateInit. The deferred
+// notification caches are per-connection too, and still flushed by the
+// post-response hook in mhdRequestCompleted, so notification ordering is
+// unchanged.
+//
+static pthread_t*       swRestWorkerV    = NULL;
+static int              swRestWorkerCount = 0;
+static SwRestState*     swRestQueueHead  = NULL;
+static SwRestState*     swRestQueueTail  = NULL;
+static pthread_mutex_t  swRestQueueMtx   = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t   swRestQueueCond  = PTHREAD_COND_INITIALIZER;
+static volatile bool    swRestWorkersRun = false;
+
+static void swRestWorkerEnqueue(SwRestState* conP)
+{
+  conP->asyncNext = NULL;
+
+  pthread_mutex_lock(&swRestQueueMtx);
+  if (swRestQueueTail != NULL)
+    swRestQueueTail->asyncNext = conP;
+  else
+    swRestQueueHead = conP;
+  swRestQueueTail = conP;
+  pthread_cond_signal(&swRestQueueCond);
+  pthread_mutex_unlock(&swRestQueueMtx);
+}
+
+static void* swRestWorkerMain(void* unused)
+{
+  (void) unused;
+
+  while (true)
+  {
+    pthread_mutex_lock(&swRestQueueMtx);
+    while (swRestQueueHead == NULL && swRestWorkersRun)
+      pthread_cond_wait(&swRestQueueCond, &swRestQueueMtx);
+
+    if (swRestQueueHead == NULL)   // woken with an empty queue => shutdown drain done
+    {
+      pthread_mutex_unlock(&swRestQueueMtx);
+      break;
+    }
+
+    SwRestState* conP = swRestQueueHead;
+    swRestQueueHead = conP->asyncNext;
+    if (swRestQueueHead == NULL)
+      swRestQueueTail = NULL;
+    pthread_mutex_unlock(&swRestQueueMtx);
+
+    // Run the dispatch on this worker, bound to the connection's own state.
+    // A self-targeted forward (swRestProcessInProcess) runs synchronously
+    // inside this same call on this same worker thread — never re-enqueued.
+    swRestP = conP;
+    swRestProcessRequest();
+    conP->asyncProcessed = true;
+    swRestP = NULL;                // drop the bind; the request leaves this thread
+
+    // Hand the connection back to MHD (ITC wakes the polling thread); MHD
+    // re-invokes mhdConnectionHandler, which sends swRest.out.
+    MHD_resume_connection(conP->mhdConnection);
+  }
+
+  return NULL;
+}
+
+static int swRestWorkerPoolStart(int workers)
+{
+  if (workers < 1)
+    workers = 1;
+
+  swRestWorkerV = (pthread_t*) calloc(workers, sizeof(pthread_t));
+  if (swRestWorkerV == NULL)
+    return -1;
+
+  swRestWorkersRun = true;
+
+  for (int i = 0; i < workers; i++)
+  {
+    if (pthread_create(&swRestWorkerV[i], NULL, swRestWorkerMain, NULL) != 0)
+    {
+      swRestWorkerCount = i;    // join only the threads that started
+      return -1;
+    }
+  }
+
+  swRestWorkerCount = workers;
+  return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestWorkerPoolStop - stop new suspensions, drain the queue, join workers
+//
+// Clearing swRestWorkersRun first makes mhdConnectionHandler process inline
+// again, so no NEW connection is suspended; the workers then drain whatever is
+// already queued (processing + resuming each) before exiting. After this
+// returns there are no suspended connections, so MHD_stop_daemon is safe
+// (suspending across MHD_stop_daemon is an API violation).
+//
+void swRestWorkerPoolStop(void)
+{
+  if (swRestWorkerV == NULL)
+    return;
+
+  pthread_mutex_lock(&swRestQueueMtx);
+  swRestWorkersRun = false;
+  pthread_cond_broadcast(&swRestQueueCond);
+  pthread_mutex_unlock(&swRestQueueMtx);
+
+  for (int i = 0; i < swRestWorkerCount; i++)
+    pthread_join(swRestWorkerV[i], NULL);
+
+  free(swRestWorkerV);
+  swRestWorkerV     = NULL;
+  swRestWorkerCount = 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // mhdConnectionHandler - MHD callback, called for each incoming request
 //
 // MHD calls this multiple times per request:
@@ -984,8 +1122,21 @@ static enum MHD_Result mhdConnectionHandler
     return MHD_YES;
   }
 
-  // --- Final call: parse, dispatch, render, respond ---
-  swRestProcessRequest();
+  // --- Final call: process (off the I/O thread when the pool is up), respond ---
+  if (swRestWorkersRun && !swRest.asyncProcessed)
+  {
+    // Suspend this connection and hand it to a worker so DB/distop latency
+    // doesn't block this epoll thread. The worker runs swRestProcessRequest and
+    // resumes us; MHD then re-invokes this handler with asyncProcessed set and
+    // we fall through to build + send the response. Suspend BEFORE enqueue so a
+    // worker can never resume a not-yet-suspended connection.
+    MHD_suspend_connection(connection);
+    swRestWorkerEnqueue(swRestP);
+    return MHD_YES;
+  }
+
+  if (!swRest.asyncProcessed)
+    swRestProcessRequest();    // pool down (shutdown / tests): run inline here
 
   char* responseBody     = (swRest.out.payload != NULL) ? swRest.out.payload : (char*) "";
   int   responseBodySize = swRest.out.payloadSize;
@@ -1272,9 +1423,11 @@ int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short 
     }
   }
 
-  // Start MHD daemon with thread pool
+  // Start MHD daemon with thread pool. MHD_ALLOW_SUSPEND_RESUME (which bundles
+  // MHD_USE_ITC) lets the I/O threads suspend a connection and hand it to the
+  // async worker pool below; the worker resumes it once the response is built.
   swRestDaemon = MHD_start_daemon(
-    MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL,
+    MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME,
     port,
     NULL,
     NULL,
@@ -1293,6 +1446,14 @@ int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short 
   if (swRestDaemon == NULL)
   {
     fprintf(stderr, "swRestInit: MHD_start_daemon failed on port %d\n", port);
+    return -1;
+  }
+
+  // Async worker pool — one worker per I/O thread. swRestWorkersRun stays false
+  // (handler processes inline) if the pool fails to start.
+  if (swRestWorkerPoolStart(poolSize) != 0)
+  {
+    fprintf(stderr, "swRestInit: async worker pool failed to start\n");
     return -1;
   }
 
