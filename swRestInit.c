@@ -303,15 +303,13 @@ static void parseUriParams(void)
 
 // -----------------------------------------------------------------------------
 //
-// mhdHeaderIterator - MHD callback to collect request headers
+// addHttpHeader - append a request header to swRest.in, extracting well-knowns
 //
-static enum MHD_Result mhdHeaderIterator
-(
-  void*              cls,
-  enum MHD_ValueKind kind,
-  const char*        key,
-  const char*        value
-)
+// Shared by the MHD header iterator and the in-process self-forward path. The
+// key/value pointers are borrowed (not copied) — the caller keeps them alive
+// for the request's lifetime.
+//
+static void addHttpHeader(const char* key, const char* value)
 {
   if (swRest.in.httpHeaderCount >= swRest.in.httpHeaderSize)
   {
@@ -319,7 +317,7 @@ static enum MHD_Result mhdHeaderIterator
     SwRestKeyValue* newV = (SwRestKeyValue*) kaAlloc(&swRest.kalloc, newSize * sizeof(SwRestKeyValue));
 
     if (newV == NULL)
-      return MHD_YES;
+      return;
 
     memcpy(newV, swRest.in.httpHeaderV, swRest.in.httpHeaderCount * sizeof(SwRestKeyValue));
 
@@ -336,7 +334,23 @@ static enum MHD_Result mhdHeaderIterator
     swRest.in.contentType = (char*) value;
   else if (strcasecmp(key, "Accept") == 0)
     swRest.in.accept = (char*) value;
+}
 
+
+
+// -----------------------------------------------------------------------------
+//
+// mhdHeaderIterator - MHD callback to collect request headers
+//
+static enum MHD_Result mhdHeaderIterator
+(
+  void*              cls,
+  enum MHD_ValueKind kind,
+  const char*        key,
+  const char*        value
+)
+{
+  addHttpHeader(key, value);
   return MHD_YES;
 }
 
@@ -391,7 +405,7 @@ static enum MHD_Result mhdUriParamIterator
 // whose endpoint is this broker): bind swRestP to an inner state, populate its
 // .in, call this, read its .out — no socket round-trip.
 //
-static void swRestProcessRequest(void)
+void swRestProcessRequest(void)
 {
   // Pre-dispatch hook: reset per-request application state (e.g. swNgsild)
   // HERE, at the start of the atomic dispatch — not at first-byte. With the
@@ -688,6 +702,139 @@ static void swRestProcessRequest(void)
   // handler and in-process self-forward callers read it uniformly.
   swRest.out.payload     = responseBody;
   swRest.out.payloadSize = responseBodySize;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestSelfForwardDepth - per-thread guard against runaway in-process forwards
+//
+#define SW_REST_SELF_FORWARD_MAX_DEPTH 8
+static __thread int swRestSelfForwardDepth = 0;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestProcessInProcess - run a distributed-op forward in-process (self-forward)
+//
+// The NGSI-LD layer detected that a forward targets this broker's own endpoint.
+// Rather than open a socket back to ourselves (a blocking round-trip that stalls
+// the epoll pool thread), run the request directly on a fresh inner SwRestState
+// and hand back the rendered result — exactly as if it had come off a socket.
+//
+// The inner request runs the full dispatch pipeline plus the post-response hook,
+// so its own deferred work (e.g. notifications for the forwarded write) fires
+// before the inner arena is freed. The inner pipeline resets thread-local
+// application state (swNgsild + deferred caches); the CALLER must save/restore
+// that around this call — see ldDistOp.c.
+//
+// Outputs are borrowed into respAllocP, which the caller must keep alive.
+// Returns the HTTP status code, or -1 if the inner request could not be set up.
+//
+int swRestProcessInProcess(SwRestVerb       verb,
+                           const char*      path,
+                           SwRestKeyValue*  headerV,
+                           int              headerCount,
+                           const char*      body,
+                           int              bodyLen,
+                           KAlloc*          respAllocP,
+                           char**           respBodyP,
+                           int*             respBodyLenP,
+                           SwRestKeyValue** respHeaderVP,
+                           int*             respHeaderCountP)
+{
+  if (respBodyP        != NULL) *respBodyP        = NULL;
+  if (respBodyLenP     != NULL) *respBodyLenP     = 0;
+  if (respHeaderVP     != NULL) *respHeaderVP     = NULL;
+  if (respHeaderCountP != NULL) *respHeaderCountP = 0;
+
+  // Via-based loop detection normally stops an in-process forward from matching
+  // the same CSR and self-forwarding again; guard the recursion depth too in
+  // case alias matching is ever misconfigured.
+  if (swRestSelfForwardDepth >= SW_REST_SELF_FORWARD_MAX_DEPTH)
+    return -1;
+
+  SwRestState* outerP = swRestP;
+  SwRestState* innerP = (SwRestState*) malloc(sizeof(SwRestState));
+  if (innerP == NULL)
+    return -1;
+
+  swRestP = innerP;
+  swRestSelfForwardDepth++;
+
+  swRestStateInit(NULL, path, swRestVerbToString(verb));
+
+  // Same logical request as the outer — reuse its start time so the inner's
+  // createdAt/modifiedAt stay consistent with the originating request.
+  swRest.requestStartTime     = outerP->requestStartTime;
+  swRest.requestStartTimeMono = outerP->requestStartTimeMono;
+
+  // URI params (swRestStateInit split a trailing ?query into swRest.in.urlParams)
+  parseUriParams();
+
+  // Request headers — borrowed; the (outer) arena they live in stays alive
+  for (int i = 0; i < headerCount; i++)
+    addHttpHeader(headerV[i].key, headerV[i].value);
+
+  // Body — copy into the inner arena (freed by swRestStateRelease)
+  if (body != NULL && bodyLen > 0)
+  {
+    swRest.in.payload = (char*) kaAlloc(&swRest.kalloc, bodyLen + 1);
+    if (swRest.in.payload != NULL)
+    {
+      memcpy(swRest.in.payload, body, bodyLen);
+      swRest.in.payload[bodyLen] = 0;
+      swRest.in.payloadSize      = bodyLen;
+    }
+  }
+
+  swRestProcessRequest();
+
+  int status = swRest.out.httpStatusCode;
+
+  // Copy the rendered body + response headers into the caller's arena BEFORE the
+  // inner arena (where they currently live) is released.
+  if (respBodyP != NULL && swRest.out.payload != NULL && swRest.out.payloadSize > 0)
+  {
+    char* b = (char*) kaAlloc(respAllocP, swRest.out.payloadSize + 1);
+    if (b != NULL)
+    {
+      memcpy(b, swRest.out.payload, swRest.out.payloadSize);
+      b[swRest.out.payloadSize] = 0;
+      *respBodyP = b;
+      if (respBodyLenP != NULL) *respBodyLenP = swRest.out.payloadSize;
+    }
+  }
+
+  if (respHeaderVP != NULL && swRest.out.headerCount > 0)
+  {
+    int n = swRest.out.headerCount;
+    SwRestKeyValue* hv = (SwRestKeyValue*) kaAlloc(respAllocP, n * sizeof(SwRestKeyValue));
+    if (hv != NULL)
+    {
+      for (int i = 0; i < n; i++)
+      {
+        hv[i].key   = kaStrdup(respAllocP, swRest.out.headerV[i].key);
+        hv[i].value = kaStrdup(respAllocP, swRest.out.headerV[i].value);
+      }
+      *respHeaderVP = hv;
+      if (respHeaderCountP != NULL) *respHeaderCountP = n;
+    }
+  }
+
+  // Flush the inner request's deferred post-response work (notifications for the
+  // forwarded write, etc.) while its arena is still alive.
+  swRestPostResponseHook();
+
+  swRestStateRelease();
+  free(innerP);
+
+  swRestSelfForwardDepth--;
+  swRestP = outerP;
+
+  return status;
 }
 
 

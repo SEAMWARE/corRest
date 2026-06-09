@@ -20,7 +20,10 @@
 #ifndef SWREST_SW_REST_INIT_H_
 #define SWREST_SW_REST_INIT_H_
 
+#include "kalloc/KAlloc.h"            // KAlloc
 #include "swRest/SwRestService.h"
+#include "swRest/SwRestVerb.h"        // SwRestVerb
+#include "swRest/SwRestKeyValue.h"    // SwRestKeyValue
 
 
 
@@ -42,5 +45,42 @@
 // Returns 0 on success, -1 on error.
 //
 extern int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize);
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestProcessRequest - run the request-dispatch core on the bound swRest state
+//
+// Consumes swRest.in, produces swRest.out (incl. the rendered body in
+// swRest.out.payload / payloadSize). Connection-free — the MHD send lives in the
+// connection handler.
+//
+extern void swRestProcessRequest(void);
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestProcessInProcess - run a distributed-op forward in-process (self-forward)
+//
+// When a forward targets this broker's own endpoint, run it directly on a fresh
+// inner SwRestState instead of over a socket. Outputs are borrowed into
+// respAllocP (kept alive by the caller). Returns the HTTP status code, or -1 if
+// the inner request could not be set up. The caller must save/restore any
+// thread-local application state the inner pipeline resets (swNgsild + deferred
+// caches).
+//
+extern int swRestProcessInProcess(SwRestVerb       verb,
+                                  const char*      path,
+                                  SwRestKeyValue*  headerV,
+                                  int              headerCount,
+                                  const char*      body,
+                                  int              bodyLen,
+                                  KAlloc*          respAllocP,
+                                  char**           respBodyP,
+                                  int*             respBodyLenP,
+                                  SwRestKeyValue** respHeaderVP,
+                                  int*             respHeaderCountP);
 
 #endif  // SWREST_SW_REST_INIT_H_
