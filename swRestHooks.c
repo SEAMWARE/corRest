@@ -32,6 +32,8 @@ SwRestParamHook       swRestParamHookF        = NULL;
 SwRestPreServiceHook  swRestPreServiceHookF   = preServiceHookNoop;
 SwRestHook            swRestPostResponseHook  = hookNoop;
 SwRestServiceInitHook swRestServiceInitHookF  = NULL;
+SwRestUserDataAllocHook swRestUserDataAllocHookF = NULL;
+SwRestUserDataFreeHook  swRestUserDataFreeHookF  = NULL;
 int                   swRestDefaultPrettySpaces = 0;
 unsigned long long    swRestMaxRequestSize    = 2 * 1024 * 1024;  // § 6.3.4 / § 6.3.2 — 413 threshold; default 2 MiB
 
@@ -122,6 +124,18 @@ void swRestSetServiceInitHook(SwRestServiceInitHook fn)
 void swRestSetPostResponseHook(SwRestHook fn)
 {
   swRestPostResponseHook = (fn != NULL) ? fn : hookNoop;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestSetUserDataHooks - register create/destroy for per-connection userData.
+//
+void swRestSetUserDataHooks(SwRestUserDataAllocHook allocFn, SwRestUserDataFreeHook freeFn)
+{
+  swRestUserDataAllocHookF = allocFn;
+  swRestUserDataFreeHookF  = freeFn;
 }
 
 

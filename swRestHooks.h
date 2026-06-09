@@ -53,6 +53,21 @@ typedef void (*SwRestServiceInitHook)(struct SwRestService* service);
 
 // -----------------------------------------------------------------------------
 //
+// SwRestUserData hooks - create/destroy the application's per-connection state
+// (e.g. swNgsild) alongside the per-connection SwRestState. The allocator runs
+// when a connection's state is created (first MHD callback, or in-process
+// self-forward setup) and its result is stored in swRest.userData; the
+// destructor runs when that state is released. This lets the app hold its
+// per-request state per-CONNECTION rather than __thread — required once requests
+// are processed off the I/O thread (multiple in-flight per thread).
+//
+typedef void* (*SwRestUserDataAllocHook)(void);
+typedef void  (*SwRestUserDataFreeHook)(void* userData);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void swRestSetPreDispatchHook(SwRestHook fn);
@@ -62,6 +77,7 @@ extern void swRestSetParamHook(SwRestParamHook fn);
 extern void swRestSetPreServiceHook(SwRestPreServiceHook fn);
 extern void swRestSetServiceInitHook(SwRestServiceInitHook fn);
 extern void swRestSetPostResponseHook(SwRestHook fn);
+extern void swRestSetUserDataHooks(SwRestUserDataAllocHook allocFn, SwRestUserDataFreeHook freeFn);
 extern void swRestSetPrettySpaces(int spaces);
 extern void swRestSetMaxRequestSize(unsigned long long bytes);
 

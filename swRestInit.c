@@ -64,6 +64,8 @@ extern SwRestParamHook       swRestParamHookF;
 extern SwRestPreServiceHook  swRestPreServiceHookF;
 extern SwRestServiceInitHook swRestServiceInitHookF;
 extern SwRestHook            swRestPostResponseHook;
+extern SwRestUserDataAllocHook swRestUserDataAllocHookF;
+extern SwRestUserDataFreeHook  swRestUserDataFreeHookF;
 extern unsigned long long    swRestMaxRequestSize;
 
 
@@ -766,6 +768,12 @@ int swRestProcessInProcess(SwRestVerb       verb,
 
   swRestStateInit(NULL, path, swRestVerbToString(verb));
 
+  // The inner request gets its OWN application state (per-conn swNgsild), so it
+  // can't clobber the paused outer's — this is what lets the distop layer drop
+  // its swNgsild save/restore around the self-forward.
+  if (swRestUserDataAllocHookF != NULL)
+    swRest.userData = swRestUserDataAllocHookF();
+
   // Same logical request as the outer — reuse its start time so the inner's
   // createdAt/modifiedAt stay consistent with the originating request.
   swRest.requestStartTime     = outerP->requestStartTime;
@@ -829,6 +837,8 @@ int swRestProcessInProcess(SwRestVerb       verb,
   swRestPostResponseHook();
 
   swRestStateRelease();
+  if (swRestUserDataFreeHookF != NULL && swRest.userData != NULL)
+    swRestUserDataFreeHookF(swRest.userData);
   free(innerP);
 
   swRestSelfForwardDepth--;
@@ -875,6 +885,11 @@ static enum MHD_Result mhdConnectionHandler
     swRestP  = conP;
 
     swRestStateInit(connection, url, method);
+
+    // Create this connection's application state (e.g. per-conn swNgsild),
+    // stored in swRest.userData and freed in mhdRequestCompleted.
+    if (swRestUserDataAllocHookF != NULL)
+      swRest.userData = swRestUserDataAllocHookF();
 
     // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
     struct timespec ts;
@@ -1107,6 +1122,10 @@ static void mhdRequestCompleted
     swRest.in.payload = NULL;
 
     swRestStateRelease();
+
+    // Destroy this connection's application state (per-conn swNgsild, ...).
+    if (swRestUserDataFreeHookF != NULL && swRest.userData != NULL)
+      swRestUserDataFreeHookF(swRest.userData);
 
     free(conP);
     *con_cls = NULL;
