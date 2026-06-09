@@ -382,136 +382,17 @@ static enum MHD_Result mhdUriParamIterator
 
 // -----------------------------------------------------------------------------
 //
-// mhdConnectionHandler - MHD callback, called for each incoming request
+// swRestProcessRequest - run the request-dispatch core on the bound swRest state
 //
-// MHD calls this multiple times per request:
-//   1. First call:  *con_cls == NULL  -> init swRest state
-//   2. Middle calls: upload_data_size > 0 -> accumulate payload
-//   3. Final call:   upload_data_size == 0 -> parse, dispatch, render, respond
+// Connection-free: consumes swRest.in (verb, url, headers, params, requestTree)
+// and produces swRest.out (status, headers, problem / responseTree) plus the
+// final rendered body in swRest.out.payload / payloadSize. The MHD send stays in
+// the connection handler. Reusable for an in-process self-forward (a distop
+// whose endpoint is this broker): bind swRestP to an inner state, populate its
+// .in, call this, read its .out — no socket round-trip.
 //
-static enum MHD_Result mhdConnectionHandler
-(
-  void*                  cls,
-  struct MHD_Connection* connection,
-  const char*            url,
-  const char*            method,
-  const char*            version,
-  const char*            uploadData,
-  size_t*                uploadDataSize,
-  void**                 con_cls
-)
+static void swRestProcessRequest(void)
 {
-  // --- First call: allocate this connection's per-request state ---
-  if (*con_cls == NULL)
-  {
-    // Each connection owns its SwRestState (hung on con_cls), so when the
-    // epoll pool thread interleaves connection B's callbacks between
-    // connection A's body-read callbacks it can no longer clobber A's state.
-    // swRestP is bound to it before swRestStateInit (whose memset/init runs
-    // through the swRest macro).
-    SwRestState* conP = (SwRestState*) malloc(sizeof(SwRestState));
-    if (conP == NULL)
-      return MHD_NO;
-    *con_cls = conP;
-    swRestP  = conP;
-
-    swRestStateInit(connection, url, method);
-
-    // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    swRest.requestStartTime = (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
-
-    struct timespec tsM;
-    clock_gettime(CLOCK_MONOTONIC, &tsM);
-    swRest.requestStartTimeMono = (uint64_t) tsM.tv_sec * 1000000000ULL + (uint64_t) tsM.tv_nsec;
-
-    // Collect request headers from MHD
-    MHD_get_connection_values(connection, MHD_HEADER_KIND, mhdHeaderIterator, NULL);
-
-    // Collect URI query parameters from MHD (already percent-decoded by MHD)
-    MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, mhdUriParamIterator, NULL);
-
-    // § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry
-    // Content-Length. § 6.3.2 — 413 when the announced body exceeds
-    // the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are
-    // outside the spec's scope and accept bodyless POSTs.
-    if ((swRest.in.verb == SwVerbPost ||
-         swRest.in.verb == SwVerbPut  ||
-         swRest.in.verb == SwVerbPatch) &&
-        url != NULL &&
-        strncmp(url, "/ngsi-ld/", 9) == 0)
-    {
-      const char* clHdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Content-Length");
-      if (clHdr == NULL)
-      {
-        // § 6.3.4 — just a 411 status, no body.
-        swRest.out.httpStatusCode    = 411;
-        swRest.in.contentLengthMissing = true;
-      }
-      else if (swRestMaxRequestSize > 0)
-      {
-        unsigned long long cl = strtoull(clHdr, NULL, 10);
-        if (cl > swRestMaxRequestSize)
-        {
-          swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
-                        "request body of %llu bytes exceeds broker limit of %llu bytes",
-                        cl, swRestMaxRequestSize);
-        }
-      }
-    }
-
-    return MHD_YES;
-  }
-
-  // Subsequent calls (body chunks, final dispatch): rebind swRestP to THIS
-  // connection's state — another connection's callback may have re-pointed
-  // swRestP on this pool thread since our last invocation here.
-  swRestP = (SwRestState*) *con_cls;
-
-  // --- Middle calls: accumulate payload ---
-  if (*uploadDataSize > 0)
-  {
-    // If the first-call check flagged 411/413, drop the bytes.
-    if (swRest.in.contentLengthMissing || swRest.out.httpStatusCode == 413)
-    {
-      *uploadDataSize = 0;
-      return MHD_YES;
-    }
-
-    // Streaming size cap — defends against clients that lie in
-    // Content-Length or use chunked encoding without a length.
-    if (swRestMaxRequestSize > 0 &&
-        (unsigned long long)(swRest.in.payloadSize + *uploadDataSize) > swRestMaxRequestSize)
-    {
-      swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
-                    "request body exceeds broker limit of %llu bytes", swRestMaxRequestSize);
-      *uploadDataSize = 0;
-      return MHD_YES;
-    }
-
-    int needed = swRest.in.payloadSize + *uploadDataSize + 1;
-
-    if (needed > swRest.payloadBufSize)
-    {
-      int newSize = (needed + 4096) & ~4095;
-      char* newBuf = (char*) realloc(swRest.in.payload, newSize);
-      if (newBuf == NULL)
-        return MHD_NO;
-      swRest.in.payload     = newBuf;
-      swRest.payloadBufSize = newSize;
-    }
-
-    memcpy(swRest.in.payload + swRest.in.payloadSize, uploadData, *uploadDataSize);
-    swRest.in.payloadSize += *uploadDataSize;
-    swRest.in.payload[swRest.in.payloadSize] = 0;
-
-    *uploadDataSize = 0;
-    return MHD_YES;
-  }
-
-  // --- Final call: parse, dispatch, render, respond ---
-
   // Pre-dispatch hook: reset per-request application state (e.g. swNgsild)
   // HERE, at the start of the atomic dispatch — not at first-byte. With the
   // epoll pool another connection's request may run on this thread between
@@ -802,6 +683,150 @@ static enum MHD_Result mhdConnectionHandler
     responseBody     = (char*) "";
     responseBodySize = 0;
   }
+
+  // Hand the rendered body back through swRest.out so both the connection
+  // handler and in-process self-forward callers read it uniformly.
+  swRest.out.payload     = responseBody;
+  swRest.out.payloadSize = responseBodySize;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// mhdConnectionHandler - MHD callback, called for each incoming request
+//
+// MHD calls this multiple times per request:
+//   1. First call:  *con_cls == NULL  -> init swRest state
+//   2. Middle calls: upload_data_size > 0 -> accumulate payload
+//   3. Final call:   upload_data_size == 0 -> parse, dispatch, render, respond
+//
+static enum MHD_Result mhdConnectionHandler
+(
+  void*                  cls,
+  struct MHD_Connection* connection,
+  const char*            url,
+  const char*            method,
+  const char*            version,
+  const char*            uploadData,
+  size_t*                uploadDataSize,
+  void**                 con_cls
+)
+{
+  // --- First call: allocate this connection's per-request state ---
+  if (*con_cls == NULL)
+  {
+    // Each connection owns its SwRestState (hung on con_cls), so when the
+    // epoll pool thread interleaves connection B's callbacks between
+    // connection A's body-read callbacks it can no longer clobber A's state.
+    // swRestP is bound to it before swRestStateInit (whose memset/init runs
+    // through the swRest macro).
+    SwRestState* conP = (SwRestState*) malloc(sizeof(SwRestState));
+    if (conP == NULL)
+      return MHD_NO;
+    *con_cls = conP;
+    swRestP  = conP;
+
+    swRestStateInit(connection, url, method);
+
+    // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    swRest.requestStartTime = (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
+
+    struct timespec tsM;
+    clock_gettime(CLOCK_MONOTONIC, &tsM);
+    swRest.requestStartTimeMono = (uint64_t) tsM.tv_sec * 1000000000ULL + (uint64_t) tsM.tv_nsec;
+
+    // Collect request headers from MHD
+    MHD_get_connection_values(connection, MHD_HEADER_KIND, mhdHeaderIterator, NULL);
+
+    // Collect URI query parameters from MHD (already percent-decoded by MHD)
+    MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, mhdUriParamIterator, NULL);
+
+    // § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry
+    // Content-Length. § 6.3.2 — 413 when the announced body exceeds
+    // the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are
+    // outside the spec's scope and accept bodyless POSTs.
+    if ((swRest.in.verb == SwVerbPost ||
+         swRest.in.verb == SwVerbPut  ||
+         swRest.in.verb == SwVerbPatch) &&
+        url != NULL &&
+        strncmp(url, "/ngsi-ld/", 9) == 0)
+    {
+      const char* clHdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Content-Length");
+      if (clHdr == NULL)
+      {
+        // § 6.3.4 — just a 411 status, no body.
+        swRest.out.httpStatusCode    = 411;
+        swRest.in.contentLengthMissing = true;
+      }
+      else if (swRestMaxRequestSize > 0)
+      {
+        unsigned long long cl = strtoull(clHdr, NULL, 10);
+        if (cl > swRestMaxRequestSize)
+        {
+          swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
+                        "request body of %llu bytes exceeds broker limit of %llu bytes",
+                        cl, swRestMaxRequestSize);
+        }
+      }
+    }
+
+    return MHD_YES;
+  }
+
+  // Subsequent calls (body chunks, final dispatch): rebind swRestP to THIS
+  // connection's state — another connection's callback may have re-pointed
+  // swRestP on this pool thread since our last invocation here.
+  swRestP = (SwRestState*) *con_cls;
+
+  // --- Middle calls: accumulate payload ---
+  if (*uploadDataSize > 0)
+  {
+    // If the first-call check flagged 411/413, drop the bytes.
+    if (swRest.in.contentLengthMissing || swRest.out.httpStatusCode == 413)
+    {
+      *uploadDataSize = 0;
+      return MHD_YES;
+    }
+
+    // Streaming size cap — defends against clients that lie in
+    // Content-Length or use chunked encoding without a length.
+    if (swRestMaxRequestSize > 0 &&
+        (unsigned long long)(swRest.in.payloadSize + *uploadDataSize) > swRestMaxRequestSize)
+    {
+      swRestProblem(413, SW_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
+                    "request body exceeds broker limit of %llu bytes", swRestMaxRequestSize);
+      *uploadDataSize = 0;
+      return MHD_YES;
+    }
+
+    int needed = swRest.in.payloadSize + *uploadDataSize + 1;
+
+    if (needed > swRest.payloadBufSize)
+    {
+      int newSize = (needed + 4096) & ~4095;
+      char* newBuf = (char*) realloc(swRest.in.payload, newSize);
+      if (newBuf == NULL)
+        return MHD_NO;
+      swRest.in.payload     = newBuf;
+      swRest.payloadBufSize = newSize;
+    }
+
+    memcpy(swRest.in.payload + swRest.in.payloadSize, uploadData, *uploadDataSize);
+    swRest.in.payloadSize += *uploadDataSize;
+    swRest.in.payload[swRest.in.payloadSize] = 0;
+
+    *uploadDataSize = 0;
+    return MHD_YES;
+  }
+
+  // --- Final call: parse, dispatch, render, respond ---
+  swRestProcessRequest();
+
+  char* responseBody     = (swRest.out.payload != NULL) ? swRest.out.payload : (char*) "";
+  int   responseBodySize = swRest.out.payloadSize;
 
   // Send HTTP response
   // For HEAD: pass the full body — MHD will set Content-Length correctly
