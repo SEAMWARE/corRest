@@ -38,6 +38,7 @@ typedef struct SwRestOut
   const char*  problemType;         // Error type URI (NULL = no error)
   const char*  problemTitle;        // Short title
   char         problemDetail[512];  // Detail message (formatted)
+  KjNode*      problemExtras;       // Optional extension members (RFC 9457 §3.2) spliced into the body; NULL = none
 } SwRestOut;
 
 #endif  // SWREST_SW_REST_OUT_H_

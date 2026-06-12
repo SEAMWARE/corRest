@@ -653,6 +653,18 @@ void swRestProcessRequest(void)
     kjChildAdd(swRest.out.responseTree, kjString (swRest.kjsonP, "title",  swRest.out.problemTitle));
     kjChildAdd(swRest.out.responseTree, kjInteger(swRest.kjsonP, "status", swRest.out.httpStatusCode));
     kjChildAdd(swRest.out.responseTree, kjString (swRest.kjsonP, "detail", swRest.out.problemDetail));
+
+    // RFC 9457 §3.2 extension members (e.g. registrationId of a failed forward).
+    if (swRest.out.problemExtras != NULL)
+    {
+      KjNode* m = swRest.out.problemExtras->value.firstChildP;
+      while (m != NULL)
+      {
+        KjNode* next = m->next;
+        kjChildAdd(swRest.out.responseTree, m);   // splice across (re-parents m, clears m->next)
+        m = next;
+      }
+    }
   }
 
   // Render response tree to JSON
