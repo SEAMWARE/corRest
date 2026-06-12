@@ -87,6 +87,7 @@ void swRestStateInit(struct MHD_Connection* connection, const char* url, const c
   swRest.in.uriParamV     = swRest.in.uriParams;
   swRest.in.uriParamCount = 0;
   swRest.in.uriParamSize  = SW_REST_INITIAL_KV_SLOTS;
+  swRest.in.uriParamMask  = 0;
 
   // Initialize HTTP header dynamic array (starts with inline slots)
   swRest.in.httpHeaderV     = swRest.in.httpHeaders;

@@ -247,6 +247,7 @@ static void addUriParam(char* name, char* value)
 
   swRest.in.uriParamV[swRest.in.uriParamCount].key   = name;
   swRest.in.uriParamV[swRest.in.uriParamCount].value  = value;
+  swRest.in.uriParamV[swRest.in.uriParamCount].bit    = 0;   // resolved in the allowlist pass
   swRest.in.uriParamCount++;
 }
 
@@ -390,6 +391,7 @@ static enum MHD_Result mhdUriParamIterator
 
   swRest.in.uriParamV[swRest.in.uriParamCount].key   = (char*) key;
   swRest.in.uriParamV[swRest.in.uriParamCount].value  = (char*) (value ? value : "");
+  swRest.in.uriParamV[swRest.in.uriParamCount].bit    = 0;   // resolved in the allowlist pass
   swRest.in.uriParamCount++;
 
   return MHD_YES;
@@ -558,6 +560,11 @@ void swRestProcessRequest(void)
     for (int i = 0; i < swRest.in.uriParamCount; i++)
     {
       uint64_t bit = swRestParamLookup(swRest.in.uriParamV[i].key);
+
+      // Resolve the param's bit once, here: carry it on the entry and OR it into
+      // the request-wide mask, so downstream code tests params by bit, not name.
+      swRest.in.uriParamV[i].bit = bit;
+      swRest.in.uriParamMask    |= bit;
 
       if (bit == 0 || (bit & swRest.serviceP->supportedParams) == 0)
       {

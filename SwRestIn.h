@@ -45,6 +45,7 @@ typedef struct SwRestIn
   SwRestKeyValue* uriParamV;
   int             uriParamCount;
   int             uriParamSize;
+  uint64_t        uriParamMask;   // OR of all received URI params' registry bits ("was X given?")
 
   // HTTP headers (dynamic array, inline for small counts)
   SwRestKeyValue  httpHeaders[SW_REST_INITIAL_KV_SLOTS];
