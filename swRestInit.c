@@ -79,6 +79,7 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
 {
   serviceP->url              = (char*) simpleP->url;
   serviceP->serviceRoutine   = simpleP->serviceRoutine;
+  serviceP->payloadCheck     = simpleP->payloadCheck;
   serviceP->supportedParams  = simpleP->supportedParams;
   serviceP->ldOp             = simpleP->ldOp;
   serviceP->options          = 0;     // embedder fills via swRestServiceInitHookF below
@@ -622,6 +623,16 @@ void swRestProcessRequest(void)
   // determined and the service routine has nothing to do.
   if (swRest.out.problemType != NULL)
     goto respond;
+
+  // Per-service payload-body validator (NGSI-LD pCheckXxx). Runs on the parsed
+  // requestTree before the service routine, so a malformed body is rejected with
+  // a pinpointed 400 instead of being half-ignored by the handler. NULL = none.
+  if (swRest.serviceP->payloadCheck != NULL)
+  {
+    swRest.serviceP->payloadCheck();
+    if (swRest.out.problemType != NULL)
+      goto respond;
+  }
 
   // Dispatch to service routine
   swRest.serviceP->serviceRoutine();
@@ -1441,7 +1452,7 @@ int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short 
 
     if (!found)
     {
-      SwRestServiceSimplified optService;
+      SwRestServiceSimplified optService = { 0 };   // zero ldOp + payloadCheck (no body validation on OPTIONS)
 
       optService.verb            = SwVerbOptions;
       optService.url             = serviceV[ix].url;

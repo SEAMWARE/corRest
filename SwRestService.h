@@ -57,6 +57,7 @@ typedef struct SwRestServiceSimplified
   SwRestServiceRoutine     serviceRoutine;
   uint64_t                 supportedParams;
   uint64_t                 ldOp;            // LdOp bit for the service's atomic op — 0 for non-NGSI-LD routes
+  SwRestServiceRoutine     payloadCheck;    // optional body validator, run before serviceRoutine — NULL for none
 } SwRestServiceSimplified;
 
 
@@ -72,6 +73,7 @@ typedef struct SwRestService
 {
   char*                  url;                          // URL Path (points into SwRestServiceSimplified)
   SwRestServiceRoutine   serviceRoutine;               // Function pointer
+  SwRestServiceRoutine   payloadCheck;                 // optional body validator, run before serviceRoutine (NULL = none)
   uint64_t               supportedParams;              // bitmask of accepted URL parameters
   uint64_t               ldOp;                         // LdOp bit (copied from SwRestServiceSimplified at init)
   uint64_t               options;                      // opaque bitmask the embedding library fills via swRestServiceInitHook
