@@ -1171,13 +1171,24 @@ static enum MHD_Result mhdConnectionHandler
     MHD_RESPMEM_MUST_COPY
   );
 
-  if (swRest.out.contentType != NULL)
+  // Content-Type policy:
+  //  - No body (size 0): omit Content-Type — it describes a body there is none
+  //    of (204 No Content, empty-body 201 Created, ...).
+  //  - NGSI-LD § 6.3.x: 201 Created and error (4xx/5xx) responses are always
+  //    application/json, regardless of the request's Accept.
+  //  - Otherwise: the negotiated type (application/json / ld+json / geo+json).
+  //
+  // TS 104-176 specifies bare media types throughout (§ 6.2.3, § 6.3.3,
+  // § 6.4.7.2 "exactly equal to the media type"); RFC 8259 defines no charset
+  // parameter for application/json — so emit the type verbatim, no charset.
+  if (responseBodySize > 0)
   {
-    // TS 104-176 specifies bare media types throughout (§ 6.2.3, § 6.3.3,
-    // § 6.4.7.2 "exactly equal to the media type"); RFC 8259 defines no charset
-    // parameter for application/json. So emit the Content-Type verbatim — no
-    // charset is appended. Callers (e.g. metrics) own any qualifier they set.
-    MHD_add_response_header(response, "Content-Type", swRest.out.contentType);
+    int         code = swRest.out.httpStatusCode;
+    const char* ct   = (code == 201 || (code >= 400 && code <= 599))
+                       ? "application/json"
+                       : swRest.out.contentType;
+    if (ct != NULL)
+      MHD_add_response_header(response, "Content-Type", ct);
   }
 
   // § 6.3.6 Prefer / Preference-Applied: when the client sent a
