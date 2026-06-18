@@ -504,7 +504,7 @@ void swRestProcessRequest(void)
     // but the request is malformed, not pointing at the wrong place.
     if (swRest.in.urlPath != NULL && strstr(swRest.in.urlPath, "//") != NULL)
     {
-      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Bad Request",
+      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Invalid URL Path",
                     "empty path segment in '%s' (likely a missing URL "
                     "variable)", swRest.in.urlPath);
       goto respond;
