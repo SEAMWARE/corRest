@@ -94,11 +94,14 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
   serviceP->matchForSecondWildcard[0]     = 0;
   serviceP->matchForThirdWildcardLen      = 0;
   serviceP->matchForThirdWildcard[0]      = 0;
+  serviceP->matchAfterLastWildcardLen     = 0;
+  serviceP->matchAfterLastWildcard[0]     = 0;
 
   char*  wildCardStart    = NULL;  // start of literal between *#1 and *#2
   char*  wildCardEnd      = NULL;  // end of literal between *#1 and *#2
   char*  thirdWildStart   = NULL;  // start of literal between *#2 and *#3
   char*  thirdWildEnd     = NULL;  // end of literal between *#2 and *#3
+  char*  afterLastWild    = NULL;  // start of literal AFTER the last '*' (suffix, e.g. "/value")
   int    ix               = 0;
 
   while (serviceP->url[ix] != 0)
@@ -123,6 +126,8 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
       }
       else if (serviceP->wildcards == 2)
         thirdWildEnd = &serviceP->url[ix];
+
+      afterLastWild = &serviceP->url[ix + 1];  // text after THIS '*' — ends up pointing past the final wildcard
 
       serviceP->wildcards += 1;
       ++ix;
@@ -169,6 +174,21 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
       {
         strncpy(serviceP->matchForThirdWildcard, thirdWildStart, serviceP->matchForThirdWildcardLen);
         serviceP->matchForThirdWildcard[serviceP->matchForThirdWildcardLen] = 0;
+      }
+    }
+
+    // Literal suffix AFTER the last '*' (e.g. ".../attrs/*/value"). Only for
+    // 2+ wildcards — for a single wildcard the after-* literal is already held
+    // in matchForSecondWildcard (the "wildcard not at end" case). 0-length =>
+    // the last wildcard runs to end-of-string (the common case), a no-op.
+    if (serviceP->wildcards >= 2 && afterLastWild != NULL)
+    {
+      int suffixLen = (int) (&serviceP->url[ix] - afterLastWild);
+      if (suffixLen > 0 && suffixLen < (int) sizeof(serviceP->matchAfterLastWildcard))
+      {
+        strncpy(serviceP->matchAfterLastWildcard, afterLastWild, suffixLen);
+        serviceP->matchAfterLastWildcard[suffixLen] = 0;
+        serviceP->matchAfterLastWildcardLen = suffixLen;
       }
     }
   }

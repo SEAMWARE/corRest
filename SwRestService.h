@@ -87,6 +87,8 @@ typedef struct SwRestService
   int                    matchForSecondWildcardLen;    // length of that pattern
   char                   matchForThirdWildcard[16];    // pattern between second and third '*'
   int                    matchForThirdWildcardLen;     // length of that pattern (0 if no third wildcard)
+  char                   matchAfterLastWildcard[16];   // literal suffix after the LAST '*' (e.g. "/value"); "" if none
+  int                    matchAfterLastWildcardLen;    // length of that suffix (0 if the last wildcard runs to end)
 } SwRestService;
 
 

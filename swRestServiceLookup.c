@@ -178,6 +178,20 @@ SwRestService* swRestServiceLookup(SwRestServiceVector* serviceV)
             char* wc0 = &swRest.in.urlPath[serviceP->charsBeforeFirstWildcard];
             char* wc1 = &matchP[serviceP->matchForSecondWildcardLen];
 
+            // Literal suffix after the last wildcard (e.g. ".../attrs/*/value"):
+            // the URL must end with it, and the last wildcard is trimmed before
+            // it. A 0-length suffix (the common case) skips this entirely.
+            if (serviceP->matchAfterLastWildcardLen > 0)
+            {
+              int wc1Len = (int) strlen(wc1);
+              if (wc1Len <= serviceP->matchAfterLastWildcardLen)
+                continue;  // nothing left for the wildcard once the suffix is removed
+              char* suffixP = wc1 + wc1Len - serviceP->matchAfterLastWildcardLen;
+              if (strcmp(suffixP, serviceP->matchAfterLastWildcard) != 0)
+                continue;  // URL does not end with the required suffix
+              *suffixP = 0;  // trim the suffix → wc1 is the wildcard value alone
+            }
+
             // For non-greedy, first wildcard must be single component (no '/'),
             // unless it's URL-form (scheme://...).
             if (!serviceP->greedy)
