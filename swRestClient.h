@@ -233,6 +233,7 @@ extern void               swRestClientPoolPut(SwRestClientConn* conn);
 // TLS (used internally, exposed for testing)
 //
 extern int   swRestClientTlsInit(void);
+extern void  swRestClientTlsInsecureSet(bool onoff);
 extern void  swRestClientTlsCleanup(void);
 extern int   swRestClientTlsConnect(SwRestClientConn* conn);
 extern int   swRestClientTlsRead(SwRestClientConn* conn, char* buf, int len);

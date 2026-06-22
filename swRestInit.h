@@ -47,6 +47,18 @@
 extern int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize);
 
 
+// -----------------------------------------------------------------------------
+//
+// swRestHttpsServerCredentialsSet - serve HTTPS instead of HTTP
+//
+// Call before swRestInit with the PEM contents (not file paths) of the private
+// key and certificate. The MHD daemon is then started with TLS enabled. NULL
+// (the default) keeps the server on plain HTTP. Used by TLS test receivers
+// (e.g. ftClient), not by the broker.
+//
+extern void swRestHttpsServerCredentialsSet(char* keyPem, char* certPem);
+
+
 
 // -----------------------------------------------------------------------------
 //

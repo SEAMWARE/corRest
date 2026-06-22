@@ -45,6 +45,26 @@ static SwRestMetrics* metricsP = NULL;
 
 // -----------------------------------------------------------------------------
 //
+// HTTPS server credentials (PEM contents, NULL == plain HTTP)
+//
+// The broker listens over plain HTTP and never sets these. A test server such
+// as ftClient that must receive notifications over TLS calls
+// swRestHttpsServerCredentialsSet() with the key+certificate PEM before
+// swRestInit; the MHD daemon is then started with TLS enabled.
+//
+static char* httpsServerKey  = NULL;
+static char* httpsServerCert = NULL;
+
+void swRestHttpsServerCredentialsSet(char* keyPem, char* certPem)
+{
+  httpsServerKey  = keyPem;
+  httpsServerCert = certPem;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // swRestMetricsSet -
 //
 void swRestMetricsSet(SwRestMetrics* metrics)
@@ -1487,22 +1507,49 @@ int swRestInit(SwRestServiceSimplified serviceV[], int services, unsigned short 
   // Start MHD daemon with thread pool. MHD_ALLOW_SUSPEND_RESUME (which bundles
   // MHD_USE_ITC) lets the I/O threads suspend a connection and hand it to the
   // async worker pool below; the worker resumes it once the response is built.
-  swRestDaemon = MHD_start_daemon(
-    MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME,
-    port,
-    NULL,
-    NULL,
-    mhdConnectionHandler,
-    NULL,
-    MHD_OPTION_NOTIFY_COMPLETED,
-    mhdRequestCompleted,
-    NULL,
-    MHD_OPTION_THREAD_POOL_SIZE,
-    (unsigned int) poolSize,
-    MHD_OPTION_CONNECTION_TIMEOUT,
-    (unsigned int) 30,
-    MHD_OPTION_END
-  );
+  //
+  // When HTTPS server credentials have been set (a TLS test receiver, not the
+  // broker), MHD_USE_TLS is added together with the in-memory key/cert.
+  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME;
+
+  if ((httpsServerKey != NULL) && (httpsServerCert != NULL))
+    swRestDaemon = MHD_start_daemon(
+      flags | MHD_USE_TLS,
+      port,
+      NULL,
+      NULL,
+      mhdConnectionHandler,
+      NULL,
+      MHD_OPTION_NOTIFY_COMPLETED,
+      mhdRequestCompleted,
+      NULL,
+      MHD_OPTION_THREAD_POOL_SIZE,
+      (unsigned int) poolSize,
+      MHD_OPTION_CONNECTION_TIMEOUT,
+      (unsigned int) 30,
+      MHD_OPTION_HTTPS_MEM_KEY,
+      httpsServerKey,
+      MHD_OPTION_HTTPS_MEM_CERT,
+      httpsServerCert,
+      MHD_OPTION_END
+    );
+  else
+    swRestDaemon = MHD_start_daemon(
+      flags,
+      port,
+      NULL,
+      NULL,
+      mhdConnectionHandler,
+      NULL,
+      MHD_OPTION_NOTIFY_COMPLETED,
+      mhdRequestCompleted,
+      NULL,
+      MHD_OPTION_THREAD_POOL_SIZE,
+      (unsigned int) poolSize,
+      MHD_OPTION_CONNECTION_TIMEOUT,
+      (unsigned int) 30,
+      MHD_OPTION_END
+    );
 
   if (swRestDaemon == NULL)
   {

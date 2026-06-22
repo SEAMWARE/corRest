@@ -9,6 +9,7 @@
 //
 
 #include <stdio.h>                               // snprintf
+#include <stdbool.h>                             // bool
 #include <string.h>                              // strlen
 #include <unistd.h>                              // close
 
@@ -24,6 +25,24 @@
 // Global SSL context (one per process)
 //
 static SSL_CTX* sslCtx = NULL;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestClientTlsInsecure - skip peer/host verification on outbound TLS
+//
+// Off by default (certificates are verified against the system CA store). When
+// the broker is started with --insecureNotif this is turned on, so notifications
+// and forwards to TLS endpoints accept self-signed certificates — the common
+// case for an endpoint inside a trusted/firewalled network.
+//
+static bool insecure = false;
+
+void swRestClientTlsInsecureSet(bool onoff)
+{
+  insecure = onoff;
+}
 
 
 
@@ -46,7 +65,7 @@ int swRestClientTlsInit(void)
     // Failed to load system CA certificates - continue anyway
   }
 
-  SSL_CTX_set_verify(sslCtx, SSL_VERIFY_PEER, NULL);
+  SSL_CTX_set_verify(sslCtx, insecure ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
 
   SSL_CTX_set_min_proto_version(sslCtx, TLS1_2_VERSION);
 
@@ -84,7 +103,8 @@ int swRestClientTlsConnect(SwRestClientConn* conn)
     return -1;
 
   SSL_set_tlsext_host_name(ssl, conn->host);
-  SSL_set1_host(ssl, conn->host);
+  if (!insecure)
+    SSL_set1_host(ssl, conn->host);
 
   if (SSL_set_fd(ssl, conn->fd) != 1)
   {
