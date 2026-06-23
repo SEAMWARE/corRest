@@ -925,3 +925,30 @@ const char* swRestClientResponseHeader(SwRestClientResponse* resp, const char* n
 
   return NULL;
 }
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestClientResponseCleanup - release the response's heap-owned parts
+//
+// The response body and statusText point into the connection's own receive
+// buffer (owned by the connection, not the response), so only the header vector
+// needs releasing — and only when it outgrew the inline 'headers' array and was
+// malloc'd. Idempotent. Call once per completed swRestClientSend, regardless of
+// whether the request used an arena (the parser mallocs the grown header vector
+// unconditionally).
+//
+void swRestClientResponseCleanup(SwRestClientResponse* resp)
+{
+  if (resp == NULL)
+    return;
+
+  if ((resp->headerV != NULL) && (resp->headerV != resp->headers))
+  {
+    free(resp->headerV);
+    resp->headerV    = resp->headers;
+    resp->headerSize = SW_REST_INITIAL_KV_SLOTS;
+    resp->headerCount = 0;
+  }
+}

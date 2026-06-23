@@ -199,6 +199,16 @@ extern int   swRestClientPost(const char* url, KjNode* body, KAlloc* allocP, KjN
 //
 extern const char* swRestClientResponseHeader(SwRestClientResponse* resp, const char* name);
 
+// -----------------------------------------------------------------------------
+//
+// swRestClientResponseCleanup - release a completed response's heap-owned parts
+//
+// Frees the response header vector if the parser grew it beyond the inline
+// array. Body/statusText point into the connection buffer and are NOT freed
+// here. Idempotent; call once per completed swRestClientSend.
+//
+extern void  swRestClientResponseCleanup(SwRestClientResponse* resp);
+
 
 
 // -----------------------------------------------------------------------------
