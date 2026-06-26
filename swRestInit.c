@@ -554,6 +554,13 @@ void swRestProcessRequest(void)
     // 405 MethodNotAllowed when the path is registered for some other
     // verb. The Allow: header lists the verbs that ARE allowed on this
     // path (RFC 7231 § 7.4.1).
+    //
+    // The Allow-probe below calls swRestServiceLookup for the OTHER verbs;
+    // a matching wildcard route NUL-terminates urlPath in place to delimit
+    // its wildcard value. Capture the full path first so the 404/405 detail
+    // reports the resource the client actually requested, not a truncation.
+    const char* reqPath = (swRest.in.urlPath != NULL) ? kaStrdup(&swRest.kalloc, swRest.in.urlPath) : "?";
+
     char allow[128];
     int  pos = 0;
     for (int v = 0; v < SwVerbs; v++)
@@ -578,7 +585,7 @@ void swRestProcessRequest(void)
       swRestProblem(405, SW_REST_ERROR_METHOD, "Method Not Allowed",
                     "%s %s — supported methods: %s",
                     swRest.in.verbString ? swRest.in.verbString : "?",
-                    swRest.in.urlPath    ? swRest.in.urlPath    : "?",
+                    reqPath,
                     allow);
     }
     else
@@ -586,7 +593,7 @@ void swRestProcessRequest(void)
       swRestProblem(404, SW_REST_ERROR_NOT_FOUND, "Not Found",
                     "%s %s is not a recognized resource",
                     swRest.in.verbString ? swRest.in.verbString : "?",
-                    swRest.in.urlPath    ? swRest.in.urlPath    : "?");
+                    reqPath);
     }
     goto respond;
   }
