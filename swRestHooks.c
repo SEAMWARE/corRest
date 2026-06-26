@@ -37,6 +37,12 @@ SwRestUserDataFreeHook  swRestUserDataFreeHookF  = NULL;
 int                   swRestDefaultPrettySpaces = 0;
 unsigned long long    swRestMaxRequestSize    = 2 * 1024 * 1024;  // § 6.3.4 / § 6.3.2 — 413 threshold; default 2 MiB
 
+// Opt-in: also accept application/geo+json on body-bearing POST/PUT/PATCH (the
+// § 6.3.4 415 gate otherwise allows only json/ld+json). OFF for the broker (a
+// geo+json entity input is correctly 415'd); a notification RECEIVER (ftClient)
+// turns it ON so it can accept geo+json NOTIFICATIONS on its /notify endpoint.
+bool                  swRestAcceptGeoJsonInput = false;
+
 
 
 // -----------------------------------------------------------------------------
@@ -147,6 +153,17 @@ void swRestSetUserDataHooks(SwRestUserDataAllocHook allocFn, SwRestUserDataFreeH
 void swRestSetPrettySpaces(int spaces)
 {
   swRestDefaultPrettySpaces = spaces;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swRestAcceptGeoJsonInputSet - accept application/geo+json on POST/PUT/PATCH
+//
+void swRestAcceptGeoJsonInputSet(bool on)
+{
+  swRestAcceptGeoJsonInput = on;
 }
 
 

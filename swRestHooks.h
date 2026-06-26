@@ -81,6 +81,12 @@ extern void swRestSetUserDataHooks(SwRestUserDataAllocHook allocFn, SwRestUserDa
 extern void swRestSetPrettySpaces(int spaces);
 extern void swRestSetMaxRequestSize(unsigned long long bytes);
 
+// Accept application/geo+json on body-bearing POST/PUT/PATCH (the § 6.3.4 415
+// gate otherwise allows only json/ld+json). OFF for the broker; a notification
+// receiver (ftClient) sets it ON to accept geo+json notifications.
+extern bool swRestAcceptGeoJsonInput;
+extern void swRestAcceptGeoJsonInputSet(bool on);
+
 
 
 // -----------------------------------------------------------------------------

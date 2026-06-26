@@ -503,6 +503,12 @@ void swRestProcessRequest(void)
         (ct[28] == 0 || ct[28] == ';' || ct[28] == ' '))
       ok = true;
 
+    // A notification receiver (ftClient) accepts geo+json notifications.
+    if (!ok && swRestAcceptGeoJsonInput &&
+        strncasecmp(ct, "application/geo+json", 20) == 0 &&
+        (ct[20] == 0 || ct[20] == ';' || ct[20] == ' '))
+      ok = true;
+
     if (!ok)
     {
       swRest.out.httpStatusCode = 415;
