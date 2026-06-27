@@ -388,39 +388,6 @@ static void addHttpHeader(const char* key, const char* value)
 
 // -----------------------------------------------------------------------------
 //
-// swMimeTypeParse - classify a Content-Type header value into SwMimeType
-//
-// Done once on reception so the request path compares an enum rather than
-// repeatedly strcasecmp-ing the header. A trailing charset/boundary parameter
-// (e.g. "; charset=utf-8") is tolerated; anything outside the JSON family (or a
-// NULL header) is SwMimeNone.
-//
-SwMimeType swMimeTypeParse(const char* contentType)
-{
-  if (contentType == NULL)
-    return SwMimeNone;
-
-  // longest first so "ld+json"/"geo+json" win over a "json" prefix test
-  if (strncasecmp(contentType, "application/merge-patch+json", 28) == 0 &&
-      (contentType[28] == 0 || contentType[28] == ';' || contentType[28] == ' '))
-    return SwMimeMergePatchJson;
-  if (strncasecmp(contentType, "application/geo+json", 20) == 0 &&
-      (contentType[20] == 0 || contentType[20] == ';' || contentType[20] == ' '))
-    return SwMimeGeoJson;
-  if (strncasecmp(contentType, "application/ld+json", 19) == 0 &&
-      (contentType[19] == 0 || contentType[19] == ';' || contentType[19] == ' '))
-    return SwMimeLdJson;
-  if (strncasecmp(contentType, "application/json", 16) == 0 &&
-      (contentType[16] == 0 || contentType[16] == ';' || contentType[16] == ' '))
-    return SwMimeJson;
-
-  return SwMimeNone;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // mhdHeaderIterator - MHD callback to collect request headers
 //
 static enum MHD_Result mhdHeaderIterator

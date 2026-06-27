@@ -24,6 +24,7 @@ INCLUDE       = -I..
 DFLAGS        =
 CFLAGS        = -O2 -Wall -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP
 LIB_SOURCES   = swRestInit.c           \
+                swMimeType.c           \
                 swRestStop.c           \
                 swRestStateInit.c      \
                 swRestServiceLookup.c  \

@@ -30,7 +30,7 @@
 //
 // SwMimeType - an NGSI-LD media type. The single enum for BOTH the request
 // Content-Type (classified on reception by swMimeTypeParse) and the Accept
-// header (negotiated by ldAcceptParse) — so the code compares an enum instead
+// header (negotiated by swAcceptParse) — so the code compares an enum instead
 // of strcasecmp-ing header strings. Numeric values are fixed: Json = 0 (the
 // zero-init / absent-Accept default, § 6.3.4), None = -1 ("not acceptable" /
 // unsupported). MergePatchJson is Content-Type only.
@@ -44,7 +44,8 @@ typedef enum SwMimeType
   SwMimeMergePatchJson          // application/merge-patch+json
 } SwMimeType;
 
-extern SwMimeType swMimeTypeParse(const char* contentType);
+extern SwMimeType swMimeTypeParse(const char* contentType);   // a Content-Type value
+extern SwMimeType swAcceptParse(const char* acceptHeader);    // a q-weighted Accept header
 
 
 
