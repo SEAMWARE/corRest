@@ -54,6 +54,29 @@ SwMimeType swMimeTypeParse(const char* contentType)
 
 // -----------------------------------------------------------------------------
 //
+// swMimeString - the canonical media-type string for a SwMimeType
+//
+// The reverse of swMimeTypeParse/swAcceptParse: the broker carries the media
+// type as the enum and turns it into a string only here, at the point a
+// response Content-Type is emitted. SwMimeNone falls back to application/json.
+//
+const char* swMimeString(SwMimeType mime)
+{
+  switch (mime)
+  {
+  case SwMimeLdJson:          return "application/ld+json";
+  case SwMimeGeoJson:         return "application/geo+json";
+  case SwMimeMergePatchJson:  return "application/merge-patch+json";
+  case SwMimeJson:
+  case SwMimeNone:
+  default:                    return "application/json";
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // trimSpaces - advance past leading whitespace
 //
 static const char* trimSpaces(const char* s)

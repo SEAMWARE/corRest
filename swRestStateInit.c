@@ -99,7 +99,7 @@ void swRestStateInit(struct MHD_Connection* connection, const char* url, const c
 
   // Defaults for response
   swRest.out.httpStatusCode = 200;
-  swRest.out.contentType    = "application/json";
+  swRest.out.contentType    = (char*) swMimeString(SwMimeJson);
   swRest.out.headerV        = swRest.out.headers;
   swRest.out.headerCount    = 0;
   swRest.out.headerSize     = SW_REST_INITIAL_KV_SLOTS;

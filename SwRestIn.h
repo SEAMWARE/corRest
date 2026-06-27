@@ -44,8 +44,9 @@ typedef enum SwMimeType
   SwMimeMergePatchJson          // application/merge-patch+json
 } SwMimeType;
 
-extern SwMimeType swMimeTypeParse(const char* contentType);   // a Content-Type value
-extern SwMimeType swAcceptParse(const char* acceptHeader);    // a q-weighted Accept header
+extern SwMimeType  swMimeTypeParse(const char* contentType);  // a Content-Type value
+extern SwMimeType  swAcceptParse(const char* acceptHeader);   // a q-weighted Accept header
+extern const char* swMimeString(SwMimeType mime);             // enum -> canonical media-type string
 
 
 
