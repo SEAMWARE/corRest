@@ -376,9 +376,45 @@ static void addHttpHeader(const char* key, const char* value)
 
   // Extract well-known headers
   if (strcasecmp(key, "Content-Type") == 0)
+  {
     swRest.in.contentType = (char*) value;
+    swRest.in.contentMime = swMimeTypeParse(value);
+  }
   else if (strcasecmp(key, "Accept") == 0)
     swRest.in.accept = (char*) value;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// swMimeTypeParse - classify a Content-Type header value into SwMimeType
+//
+// Done once on reception so the request path compares an enum rather than
+// repeatedly strcasecmp-ing the header. A trailing charset/boundary parameter
+// (e.g. "; charset=utf-8") is tolerated; anything outside the JSON family (or a
+// NULL header) is SwMimeNone.
+//
+SwMimeType swMimeTypeParse(const char* contentType)
+{
+  if (contentType == NULL)
+    return SwMimeNone;
+
+  // longest first so "ld+json"/"geo+json" win over a "json" prefix test
+  if (strncasecmp(contentType, "application/merge-patch+json", 28) == 0 &&
+      (contentType[28] == 0 || contentType[28] == ';' || contentType[28] == ' '))
+    return SwMimeMergePatchJson;
+  if (strncasecmp(contentType, "application/geo+json", 20) == 0 &&
+      (contentType[20] == 0 || contentType[20] == ';' || contentType[20] == ' '))
+    return SwMimeGeoJson;
+  if (strncasecmp(contentType, "application/ld+json", 19) == 0 &&
+      (contentType[19] == 0 || contentType[19] == ';' || contentType[19] == ' '))
+    return SwMimeLdJson;
+  if (strncasecmp(contentType, "application/json", 16) == 0 &&
+      (contentType[16] == 0 || contentType[16] == ';' || contentType[16] == ' '))
+    return SwMimeJson;
+
+  return SwMimeNone;
 }
 
 
@@ -490,23 +526,16 @@ void swRestProcessRequest(void)
        swRest.in.verb == SwVerbPut   ||
        swRest.in.verb == SwVerbPatch))
   {
-    const char* ct = swRest.in.contentType;
-    bool ok = (strncasecmp(ct, "application/json",    16) == 0 &&
-               (ct[16] == 0 || ct[16] == ';' || ct[16] == ' ')) ||
-              (strncasecmp(ct, "application/ld+json", 19) == 0 &&
-               (ct[19] == 0 || ct[19] == ';' || ct[19] == ' '));
+    SwMimeType mime = swRest.in.contentMime;
+    bool ok = (mime == SwMimeJson || mime == SwMimeLdJson);
 
     // PATCH also accepts application/merge-patch+json (RFC 7396 / NGSI-LD
     // § 5.6.18 Merge / § 5.6.5 Partial Update). Other media types remain 415.
-    if (!ok && swRest.in.verb == SwVerbPatch &&
-        strncasecmp(ct, "application/merge-patch+json", 28) == 0 &&
-        (ct[28] == 0 || ct[28] == ';' || ct[28] == ' '))
+    if (!ok && swRest.in.verb == SwVerbPatch && mime == SwMimeMergePatchJson)
       ok = true;
 
     // A notification receiver (ftClient) accepts geo+json notifications.
-    if (!ok && swRestAcceptGeoJsonInput &&
-        strncasecmp(ct, "application/geo+json", 20) == 0 &&
-        (ct[20] == 0 || ct[20] == ';' || ct[20] == ' '))
+    if (!ok && swRestAcceptGeoJsonInput && mime == SwMimeGeoJson)
       ok = true;
 
     if (!ok)

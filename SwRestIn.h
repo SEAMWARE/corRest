@@ -28,6 +28,28 @@
 
 // -----------------------------------------------------------------------------
 //
+// SwMimeType - an NGSI-LD media type. The single enum for BOTH the request
+// Content-Type (classified on reception by swMimeTypeParse) and the Accept
+// header (negotiated by ldAcceptParse) — so the code compares an enum instead
+// of strcasecmp-ing header strings. Numeric values are fixed: Json = 0 (the
+// zero-init / absent-Accept default, § 6.3.4), None = -1 ("not acceptable" /
+// unsupported). MergePatchJson is Content-Type only.
+//
+typedef enum SwMimeType
+{
+  SwMimeNone           = -1,   // absent / not acceptable / unsupported
+  SwMimeJson           =  0,   // application/json (default)
+  SwMimeLdJson,                 // application/ld+json
+  SwMimeGeoJson,                // application/geo+json
+  SwMimeMergePatchJson          // application/merge-patch+json
+} SwMimeType;
+
+extern SwMimeType swMimeTypeParse(const char* contentType);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // SwRestIn - incoming request data
 //
 typedef struct SwRestIn
@@ -65,8 +87,10 @@ typedef struct SwRestIn
   int         payloadSize;
   KjNode*     requestTree;                        // parsed JSON payload body
 
-  // Content-Type header value (convenience pointer into httpHeaders)
+  // Content-Type header value (convenience pointer into httpHeaders), and its
+  // media type classified on reception
   char*       contentType;
+  SwMimeType  contentMime;
   char*       accept;
 } SwRestIn;
 
