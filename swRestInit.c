@@ -102,7 +102,7 @@ static void servicePrepare(SwRestService* serviceP, SwRestServiceSimplified* sim
   serviceP->payloadCheck     = simpleP->payloadCheck;
   serviceP->supportedParams  = simpleP->supportedParams;
   serviceP->ldOp             = simpleP->ldOp;
-  serviceP->options          = 0;     // embedder fills via swRestServiceInitHookF below
+  serviceP->options          = simpleP->options;   // author-declared features; init hook adds wildcard bits below
   serviceP->wildcards        = 0;
   serviceP->greedy           = false;
 

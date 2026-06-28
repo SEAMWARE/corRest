@@ -42,6 +42,37 @@ typedef struct SwRestParam
 
 // -----------------------------------------------------------------------------
 //
+// SwRestServiceOptions - per-service option bits, in two named groups.
+//
+//   wildcards - URL wildcard-slot validation, COMPUTED at init time from the
+//               URL pattern by the service-init hook (ldUrlWildcardOptionsInit).
+//               Not set by the service author.
+//   features  - service features DECLARED by the service author in the service
+//               table (SwRestServiceSimplified.options). Copied verbatim into
+//               the runtime service at init; the wildcard bits are added on top.
+//
+// A bit-struct (rather than a raw mask + #defines) so each flag reads by name.
+//
+typedef struct SwRestServiceOptions
+{
+  struct
+  {
+    uint8_t  uriAt0   : 1;   // wildcard[0] must be a valid URI (entity/sub/reg/map id)
+    uint8_t  nameAt1  : 1;   // wildcard[1] must be a valid attribute name (§ 4.6.2)
+    uint8_t  uriAt2   : 1;   // wildcard[2] must be a valid instance URI
+  } wildcards;
+
+  struct
+  {
+    uint8_t  entityArrayBody : 1;  // body is an array of Entity objects → § 6.2.4
+                                   // @context-member rule is checked per element
+  } features;
+} SwRestServiceOptions;
+
+
+
+// -----------------------------------------------------------------------------
+//
 // SwRestServiceSimplified -
 //
 // This is what the caller provides: a flat array of services, each with its verb.
@@ -58,6 +89,7 @@ typedef struct SwRestServiceSimplified
   uint64_t                 supportedParams;
   uint64_t                 ldOp;            // LdOp bit for the service's atomic op — 0 for non-NGSI-LD routes
   SwRestServiceRoutine     payloadCheck;    // optional body validator, run before serviceRoutine — NULL for none
+  SwRestServiceOptions     options;         // author-declared service features (wildcard bits added at init)
 } SwRestServiceSimplified;
 
 
@@ -76,7 +108,7 @@ typedef struct SwRestService
   SwRestServiceRoutine   payloadCheck;                 // optional body validator, run before serviceRoutine (NULL = none)
   uint64_t               supportedParams;              // bitmask of accepted URL parameters
   uint64_t               ldOp;                         // LdOp bit (copied from SwRestServiceSimplified at init)
-  uint64_t               options;                      // opaque bitmask the embedding library fills via swRestServiceInitHook
+  SwRestServiceOptions   options;                      // author features + init-hook wildcard bits (see SwRestServiceOptions)
   int                    wildcards;                    // 0, 1, or 2+
   bool                   greedy;                       // true if last wildcard is ** (matches multiple components)
   int                    charsBeforeFirstWildcard;     // length of fixed prefix before first '*'
