@@ -476,11 +476,31 @@ void swRestProcessRequest(void)
   if (swRest.out.problemType != NULL && swRest.out.httpStatusCode == 413)
     goto respond;
 
-  // Lookup service early — the parse hook needs to know the route so it can
-  // tailor validation (e.g. batch ops surface per-element @context errors as
-  // 207 entries instead of a global 400). serviceP may stay NULL here; the
-  // 404/405 handling below still runs in that case.
-  swRest.serviceP = swRestServiceLookup(&swRestServiceV[swRest.in.verb]);
+  // A method outside NGSI-LD's seven verbs (swRestVerbFromString → SwVerbs)
+  // splits two ways (§ 6.2.1 + RFC 9110 § 9.3):
+  //   - a VALID HTTP method the broker does not use (TRACE, CONNECT) is
+  //     "recognised but not allowed on this path" → leave serviceP NULL and
+  //     fall through to the 405 + Allow handling below;
+  //   - anything else is not an HTTP method at all → malformed → 400.
+  // Either way, guard before the verb-indexed lookup, which would otherwise
+  // read swRestServiceV[] out of bounds at index SwVerbs.
+  if (swRest.in.verb == SwVerbs)
+  {
+    const char* m = swRest.in.verbString;
+    if (m == NULL || (strcmp(m, "TRACE") != 0 && strcmp(m, "CONNECT") != 0))
+    {
+      swRestProblem(400, SW_REST_ERROR_BAD_REQUEST, "Invalid HTTP Method",
+                    "unrecognized HTTP method '%s'", m ? m : "?");
+      goto respond;
+    }
+    swRest.serviceP = NULL;   // TRACE/CONNECT — no NGSI-LD service → 405 below
+  }
+  else
+    // Lookup service early — the parse hook needs to know the route so it can
+    // tailor validation (e.g. batch ops surface per-element @context errors as
+    // 207 entries instead of a global 400). serviceP may stay NULL here; the
+    // 404/405 handling below still runs in that case.
+    swRest.serviceP = swRestServiceLookup(&swRestServiceV[swRest.in.verb]);
 
   // § 6.3.4 — Unsupported Media Type. POST / PATCH / PUT on a body-bearing
   // NGSI-LD endpoint with a Content-Type that isn't application/json or
