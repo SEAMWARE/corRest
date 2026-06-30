@@ -30,8 +30,25 @@
 
 // -----------------------------------------------------------------------------
 //
-// swRestProblem - set problem details in swRest.out
+// swRestProblemFunction - set problem details in swRest.out and log the error
 //
-extern void swRestProblem(int statusCode, const char* type, const char* title, const char* fmt, ...);
+// Use the swRestProblem macro instead — it captures the caller's __FILE__,
+// __LINE__ and __FUNCTION__ so the logged error line points at the place the
+// problem was detected, not swRestProblem.c (same technique as ldError).
+//
+extern void swRestProblemFunction
+(
+  int          statusCode,
+  const char*  type,
+  const char*  title,
+  const char*  fileName,
+  int          lineNo,
+  const char*  functionName,
+  const char*  fmt,
+  ...
+);
+
+#define swRestProblem(statusCode, type, title, ...)  \
+  swRestProblemFunction(statusCode, type, title, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 
 #endif  // SWREST_SW_REST_PROBLEM_H_
