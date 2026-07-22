@@ -19,6 +19,7 @@
 #include "kjson/kjRender.h"             // kjFastRender
 #include "kjson/kjRenderSize.h"         // kjFastRenderSize
 #include "kjson/kjBuilder.h"            // kjObject, kjString, kjChildAdd
+#include "ktrace/kTrace.h"              // KT_V
 
 #include "swRest/SwRestVerb.h"          // SwVerbs, swRestVerbToString
 #include "swRest/SwRestService.h"       // SwRestService, SwRestServiceVector
@@ -1110,6 +1111,8 @@ static enum MHD_Result mhdConnectionHandler
   // --- First call: allocate this connection's per-request state ---
   if (*con_cls == NULL)
   {
+    KT_V("Request: %s %s", method, url);  // one line per request (verbose mode, -v)
+
     // Each connection owns its SwRestState (hung on con_cls), so when the
     // epoll pool thread interleaves connection B's callbacks between
     // connection A's body-read callbacks it can no longer clobber A's state.
