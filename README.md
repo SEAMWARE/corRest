@@ -153,12 +153,12 @@ present (the build references `../<lib>/lib<lib>.a`).
 
 Sibling k-lib repos (one `.a` each):
 
-- [`kalloc`](../kalloc) — arena allocator (`KAlloc`)
-- [`kjson`](../kjson) — JSON parsing / trees (`KjNode`)
-- [`kbase`](../kbase) — core utilities
-- [`klog`](../klog) — logging
-- [`ktrace`](../ktrace) — trace levels
-- [`kprom`](../kprom) — Prometheus metrics
+- [`kalloc`](https://gitlab.com/kzangeli/kalloc) — arena allocator (`KAlloc`)
+- [`kjson`](https://gitlab.com/kzangeli/kjson) — JSON parsing / trees (`KjNode`)
+- [`kbase`](https://gitlab.com/kzangeli/kbase) — core utilities
+- [`klog`](https://gitlab.com/kzangeli/klog) — logging
+- [`ktrace`](https://gitlab.com/kzangeli/ktrace) — trace levels
+- [`kprom`](https://gitlab.com/kzangeli/kprom) — Prometheus metrics
 
 System libraries: `libmicrohttpd` (HTTP server), `openssl` (`ssl`/`crypto`, TLS
 client), `pthread`, `m`.
