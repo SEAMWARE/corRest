@@ -7,6 +7,7 @@
 // AUTHOR          Ken Zangelin
 //
 // Copyright 2026 Seamware
+// SPDX-License-Identifier: Apache-2.0
 //
 // Append a (key, value) pair to corRest.out.headerV with one call,
 // hiding the inline-array vs. heap-grown distinction service routines

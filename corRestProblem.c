@@ -4,6 +4,7 @@
 // AUTHOR          Ken Zangelin
 //
 // Copyright 2026 Seamware
+// SPDX-License-Identifier: Apache-2.0
 //
 #include <stdarg.h>                     // va_list, va_start, va_end
 #include <stdio.h>                      // vsnprintf

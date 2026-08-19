@@ -4,6 +4,7 @@
 // AUTHOR          Ken Zangelin
 //
 // Copyright 2026 Seamware
+// SPDX-License-Identifier: Apache-2.0
 //
 // RFC 9457 Problem Details for NGSI-LD error responses.
 //

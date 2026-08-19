@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 #
 # corTestFunctions.sh - repo-specific test functions for corRest
 #

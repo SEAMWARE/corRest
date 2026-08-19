@@ -4,6 +4,7 @@
 // AUTHOR          Ken Zangelin
 //
 // Copyright 2026 Seamware
+// SPDX-License-Identifier: Apache-2.0
 //
 // Media-type classification for the rest layer: the single CorMimeType enum
 // (CorRestIn.h) plus the two parsers that produce it —
