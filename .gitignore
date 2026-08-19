@@ -14,7 +14,7 @@ plugins/
 *.teardown
 *.name
 *.stderr
-swRestTest
+corRestTest
 *.d
 *.gcno
 *.gcda

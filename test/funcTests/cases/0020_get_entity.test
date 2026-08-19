@@ -2,15 +2,15 @@
 GET entity by ID (single wildcard)
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. GET /api/v1/entities/E1"
 echo "==========================="
-swCurl --url /api/v1/entities/E1
+corCurl --url /api/v1/entities/E1
 echo "02. GET /api/v1/entities/urn:ngsi-ld:Entity:123"
 echo "================================================"
-swCurl --url /api/v1/entities/urn:ngsi-ld:Entity:123
+corCurl --url /api/v1/entities/urn:ngsi-ld:Entity:123
 
 --EXPECT--
 01. GET /api/v1/entities/E1
@@ -31,4 +31,4 @@ Content-Length: REGEX(\d+)
 {"id":"urn:ngsi-ld:Entity:123"}
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

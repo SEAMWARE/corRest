@@ -2,12 +2,12 @@
 GET ping
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. GET /api/v1/ping"
 echo "====================="
-swCurl --url /api/v1/ping
+corCurl --url /api/v1/ping
 
 --EXPECT--
 01. GET /api/v1/ping
@@ -20,4 +20,4 @@ Content-Length: 15
 {"ping":"pong"}
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

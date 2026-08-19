@@ -2,20 +2,20 @@
 HEAD requests (auto-generated from GET, no body, correct Content-Length)
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. HEAD /api/v1/ping - same headers as GET, no body"
 echo "====================================================="
-curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/api/v1/ping | tr -d '\r' | grep -v "^$"
+curl -s --head http://${COR_BROKER_HOST}:${COR_BROKER_PORT}/api/v1/ping | tr -d '\r' | grep -v "^$"
 echo ""
 echo "02. HEAD /api/v1/entities/E1 - wildcard URL works"
 echo "=================================================="
-curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/api/v1/entities/E1 | tr -d '\r' | grep -v "^$"
+curl -s --head http://${COR_BROKER_HOST}:${COR_BROKER_PORT}/api/v1/entities/E1 | tr -d '\r' | grep -v "^$"
 echo ""
 echo "03. HEAD /no/such/path - 404"
 echo "============================="
-curl -s --head http://${SW_BROKER_HOST}:${SW_BROKER_PORT}/no/such/path | tr -d '\r' | grep -v "^$"
+curl -s --head http://${COR_BROKER_HOST}:${COR_BROKER_PORT}/no/such/path | tr -d '\r' | grep -v "^$"
 
 --EXPECT--
 01. HEAD /api/v1/ping - same headers as GET, no body
@@ -41,4 +41,4 @@ Content-Length: REGEX(\d+)
 
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

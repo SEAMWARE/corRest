@@ -2,12 +2,12 @@
 POST entity with JSON payload
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. POST /api/v1/entities"
 echo "========================="
-swCurl -X POST --url /api/v1/entities --payload '{"type":"T","id":"E2"}'
+corCurl -X POST --url /api/v1/entities --payload '{"type":"T","id":"E2"}'
 
 --EXPECT--
 01. POST /api/v1/entities
@@ -21,4 +21,4 @@ Content-Length: REGEX(\d+)
 {"created":true,"payloadSize":REGEX(\d+),"payloadType":"Object"}
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

@@ -2,12 +2,12 @@
 404 Not Found for unknown URL (RFC 9457 Problem Details)
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. GET /no/such/path - 404"
 echo "==========================="
-swCurl --url /no/such/path
+corCurl --url /no/such/path
 
 --EXPECT--
 01. GET /no/such/path - 404
@@ -20,4 +20,4 @@ Content-Length: REGEX(\d+)
 {"type":"https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound","title":"Not Found","detail":"GET /no/such/path is not a recognized resource"}
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

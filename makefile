@@ -17,34 +17,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-LIB_SO        = libswRest.so
-LIB           = libswRest.a
+LIB_SO        = libcorRest.so
+LIB           = libcorRest.a
 CC            = gcc
 INCLUDE       = -I..
 DFLAGS        =
 CFLAGS        = -O2 -Wall -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP
-LIB_SOURCES   = swRestInit.c           \
-                swMimeType.c           \
-                swRestStop.c           \
-                swRestStateInit.c      \
-                swRestServiceLookup.c  \
-                swRestVerbFromString.c \
-                swRestVersion.c        \
-                swRestProblem.c        \
-                swRestOutHeader.c      \
-                swRestHooks.c          \
-                swRestParamRegistry.c  \
-                swRestClient.c         \
-                swRestClientPool.c     \
-                swRestClientParse.c    \
-                swRestClientTls.c      \
-                swRestClientMulti.c
+LIB_SOURCES   = corRestInit.c           \
+                corMimeType.c           \
+                corRestStop.c           \
+                corRestStateInit.c      \
+                corRestServiceLookup.c  \
+                corRestVerbFromString.c \
+                corRestVersion.c        \
+                corRestProblem.c        \
+                corRestOutHeader.c      \
+                corRestHooks.c          \
+                corRestParamRegistry.c  \
+                corRestClient.c         \
+                corRestClientPool.c     \
+                corRestClientParse.c    \
+                corRestClientTls.c      \
+                corRestClientMulti.c
 
 LIB_OBJS      = $(LIB_SOURCES:c=o)
 LIB_DEPS      = $(LIB_SOURCES:c=d)
 
-TEST          = swRestTest
-TEST_SOURCES  = swRestTest.c
+TEST          = corRestTest
+TEST_SOURCES  = corRestTest.c
 TEST_OBJS     = $(TEST_SOURCES:c=o)
 
 SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../klog -L../ktrace -L../kprom

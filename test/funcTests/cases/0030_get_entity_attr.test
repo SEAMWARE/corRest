@@ -2,12 +2,12 @@
 GET entity attribute (double wildcard)
 
 --INIT--
-swBrokerStart
+coraineStart
 
 --RUN--
 echo "01. GET /api/v1/entities/E1/attrs/temperature"
 echo "=============================================="
-swCurl --url /api/v1/entities/E1/attrs/temperature
+corCurl --url /api/v1/entities/E1/attrs/temperature
 
 --EXPECT--
 01. GET /api/v1/entities/E1/attrs/temperature
@@ -20,4 +20,4 @@ Content-Length: REGEX(\d+)
 {"entity":"E1","attr":"temperature"}
 
 --TEARDOWN--
-swBrokerStop
+coraineStop

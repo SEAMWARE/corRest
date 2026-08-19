@@ -5,23 +5,23 @@
 //
 // Copyright 2026 Seamware
 //
-#ifndef SWREST_VERSION_H_
-#define SWREST_VERSION_H_
+#ifndef CORREST_VERSION_H_
+#define CORREST_VERSION_H_
 
 
 
 // -----------------------------------------------------------------------------
 //
-// SWREST_VERSION
+// CORREST_VERSION
 //
-#define SWREST_VERSION "0.1.0"
+#define CORREST_VERSION "0.1.0"
 
 
 
 // -----------------------------------------------------------------------------
 //
-// swRestVersion -
+// corRestVersion -
 //
-extern char* swRestVersion;
+extern char* corRestVersion;
 
-#endif  // SWREST_VERSION_H_
+#endif  // CORREST_VERSION_H_
