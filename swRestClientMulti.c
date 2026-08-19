@@ -209,13 +209,9 @@ static int buildSendBuf(SwcMultiEntry* entry)
   if (n < 0 || n >= end - p) { free(buf); return -1; }
   p += n;
 
-  {
-    static const char uaLine[] = "User-Agent: swRest/1.0\r\n";
-    int uaLen = (int) (sizeof(uaLine) - 1);
-    if (p + uaLen > end) { free(buf); return -1; }
-    memcpy(p, uaLine, uaLen);
-    p += uaLen;
-  }
+  n = snprintf(p, end - p, "User-Agent: %s\r\n", swRestClientUserAgent);
+  if (n < 0 || n >= end - p) { free(buf); return -1; }
+  p += n;
 
   for (int i = 0; i < req->headerCount; i++)
   {

@@ -162,6 +162,11 @@ extern void  swRestClientCleanup(void);
 // notifications, JSON-LD context downloads, …).
 extern int   swRestClientDefaultRequestTimeoutMs;
 
+// The User-Agent every client path puts on the wire. Set once at boot via
+// swRestClientInit's userAgent parameter; read by both the pool path and the
+// multi path, so a process speaks with a single identity.
+extern const char* swRestClientUserAgent;
+
 
 
 // -----------------------------------------------------------------------------

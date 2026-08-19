@@ -34,7 +34,6 @@
 // Global pool instance
 //
 static bool        tlsInited = false;
-static const char* clientUserAgent = "swRest/1.0";
 
 
 
@@ -51,12 +50,24 @@ int swRestClientDefaultRequestTimeoutMs = 5000;
 
 // -----------------------------------------------------------------------------
 //
+// swRestClientUserAgent - the User-Agent every client path puts on the wire
+//
+// Set once at boot by swRestClientInit; the pool path and the multi path both
+// read it, so a process speaks with a single identity no matter which path a
+// request takes.
+//
+const char* swRestClientUserAgent = "Cor/1.0";
+
+
+
+// -----------------------------------------------------------------------------
+//
 // swRestClientInit - Initialize the client subsystem
 //
 int swRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent)
 {
   if (userAgent != NULL)
-    clientUserAgent = userAgent;
+    swRestClientUserAgent = userAgent;
 
   int s;
 
@@ -489,7 +500,7 @@ static int buildRequestBuf(SwRestClientRequest* req, char* buf, int bufSize,
     return -1;
   p += n;
 
-  n = snprintf(p, end - p, "User-Agent: %s\r\n", clientUserAgent);
+  n = snprintf(p, end - p, "User-Agent: %s\r\n", swRestClientUserAgent);
   if (n < 0 || n >= end - p)
     return -1;
   p += n;
