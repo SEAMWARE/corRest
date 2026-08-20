@@ -718,8 +718,14 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
               buf[j++] = (c == '\r') ? '|' : (c == '\n') ? '~' : c;
             }
             buf[j] = 0;
+            //
+            // The precisions are what make this fit: errorDetail is 256 bytes and
+            // the head alone can be 255, so without them the compiler is right to
+            // warn that the tail of the message may be lost. Bounded, the worst
+            // case is a truncated head - which is what a "head" is for anyway.
+            //
             snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
-                     "%s (n=%d, errno=%d %s, bufLen=%d, head=%s)",
+                     "%s (n=%d, errno=%d %.40s, bufLen=%d, head=%.120s)",
                      (n == 0) ? "Connection closed by peer" : "recv() failed",
                      n, errno, strerror(errno), conn->bufLen, buf);
             entry->state = CorrStateDone;
