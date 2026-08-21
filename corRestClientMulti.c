@@ -360,6 +360,7 @@ static int startConnect(CorrMultiEntry* entry)
   if (conn == NULL)
   {
     close(fd);
+    freeaddrinfo(res);
     return -1;
   }
 
@@ -384,7 +385,19 @@ static int startConnect(CorrMultiEntry* entry)
   entry->conn     = conn;
 
   if (r == 0)
+  {
+    //
+    // Connected on the first address, without waiting - the usual outcome over
+    // loopback. The remaining addresses are moot, exactly as they are when a
+    // deferred connect completes, so release the list here too.
+    //
+    // Skipping this did not lose much per connection, but a keep-alive
+    // connection is never freed while the broker runs: the list it was still
+    // holding survived to process exit, once per pooled connection.
+    //
+    aiDone(conn);
     entry->state = CorrStateWriting;
+  }
   else
     entry->state = CorrStateConnecting;
 
@@ -892,6 +905,15 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
 
     if (entry->conn != NULL)
     {
+      //
+      // Whatever happens to the connection now, it has no further use for the
+      // address list: either it is going into the pool already connected, or it
+      // is being destroyed. A connection that never got to the "connected"
+      // branch - a timeout, most often - still held its list here, and this is
+      // the last place that could release it.
+      //
+      aiDone(entry->conn);
+
       if (entry->resp.error == 0 && entry->conn->keepAlive)
       {
         int flags = fcntl(entry->conn->fd, F_GETFL, 0);
