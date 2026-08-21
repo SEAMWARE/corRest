@@ -303,26 +303,47 @@ static int startConnect(CorrMultiEntry* entry)
   if (getaddrinfo(req->host, portStr, &hints, &res) != 0 || res == NULL)
     return -1;
 
-  int fd = socket(res->ai_family, SOCK_STREAM, 0);
-  if (fd < 0)
+  //
+  // EVERY address, not just the first. AF_UNSPEC means getaddrinfo may answer
+  // with IPv6 ahead of IPv4 - "localhost" commonly resolves ::1 first - and a
+  // listener bound to IPv4 only then refuses that address instantly. Taking the
+  // first result and giving up turns a perfectly reachable endpoint into
+  // "Connection failed", which is exactly what happened the first time these
+  // tests ran somewhere other than a workstation: every distributed operation to
+  // localhost failed while the same endpoint answered curl.
+  //
+  // The blocking client (corRestClient.c) has always walked the list; this one
+  // did not. Note the asymmetry with connect() here being non-blocking: a
+  // candidate that returns EINPROGRESS is ACCEPTED, and a genuine failure only
+  // shows later - so this loop can only skip addresses that fail immediately,
+  // which is precisely the ::1-refused case it exists for.
+  //
+  int fd = -1;
+  int r  = -1;                 // 0 = connected outright, EINPROGRESS = still connecting
+
+  for (struct addrinfo* rp = res; rp != NULL; rp = rp->ai_next)
   {
-    freeaddrinfo(res);
-    return -1;
+    fd = socket(rp->ai_family, SOCK_STREAM, 0);
+    if (fd < 0)
+      continue;
+
+    setNonBlocking(fd);
+
+    int opt = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
+    r = connect(fd, rp->ai_addr, rp->ai_addrlen);
+    if (r == 0 || errno == EINPROGRESS)
+      break;
+
+    close(fd);
+    fd = -1;
   }
 
-  setNonBlocking(fd);
-
-  int opt = 1;
-  setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-
-  int r = connect(fd, res->ai_addr, res->ai_addrlen);
   freeaddrinfo(res);
 
-  if (r < 0 && errno != EINPROGRESS)
-  {
-    close(fd);
+  if (fd < 0)
     return -1;
-  }
 
   conn = (CorRestClientConn*)calloc(1, sizeof(CorRestClientConn));
   if (conn == NULL)
