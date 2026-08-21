@@ -91,6 +91,14 @@ struct CorRestClientMulti
 
 // -----------------------------------------------------------------------------
 //
+// aiDone - release the address list a connection may still be walking (below)
+//
+static void aiDone(CorRestClientConn* conn);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // setNonBlocking -
 //
 static void setNonBlocking(int fd)
@@ -276,6 +284,7 @@ static int startConnect(CorrMultiEntry* entry)
           corRestClientTlsClose(conn);
         close(conn->fd);
         free(conn->buf);
+        aiDone(conn);
         free(conn);
         conn = NULL;
       }
@@ -318,10 +327,11 @@ static int startConnect(CorrMultiEntry* entry)
   // shows later - so this loop can only skip addresses that fail immediately,
   // which is precisely the ::1-refused case it exists for.
   //
-  int fd = -1;
-  int r  = -1;                 // 0 = connected outright, EINPROGRESS = still connecting
+  int              fd = -1;
+  int              r  = -1;    // 0 = connected outright, EINPROGRESS = still connecting
+  struct addrinfo* rp;
 
-  for (struct addrinfo* rp = res; rp != NULL; rp = rp->ai_next)
+  for (rp = res; rp != NULL; rp = rp->ai_next)
   {
     fd = socket(rp->ai_family, SOCK_STREAM, 0);
     if (fd < 0)
@@ -340,10 +350,11 @@ static int startConnect(CorrMultiEntry* entry)
     fd = -1;
   }
 
-  freeaddrinfo(res);
-
   if (fd < 0)
+  {
+    freeaddrinfo(res);
     return -1;
+  }
 
   conn = (CorRestClientConn*)calloc(1, sizeof(CorRestClientConn));
   if (conn == NULL)
@@ -352,8 +363,10 @@ static int startConnect(CorrMultiEntry* entry)
     return -1;
   }
 
-  conn->fd   = fd;
-  conn->port = req->port;
+  conn->fd     = fd;
+  conn->aiList = res;                       // owned by the conn from here
+  conn->aiNext = (rp != NULL) ? rp->ai_next : NULL;
+  conn->port   = req->port;
   conn->tls  = isTls;
   snprintf(conn->host, sizeof(conn->host), "%s", req->host);
 
@@ -362,6 +375,7 @@ static int startConnect(CorrMultiEntry* entry)
   if (conn->buf == NULL)
   {
     close(fd);
+    aiDone(conn);
     free(conn);
     return -1;
   }
@@ -377,6 +391,60 @@ static int startConnect(CorrMultiEntry* entry)
   return 0;
 }
 
+
+
+// -----------------------------------------------------------------------------
+//
+// aiDone - release the address list a connection was still walking
+//
+static void aiDone(CorRestClientConn* conn)
+{
+  if (conn->aiList != NULL)
+  {
+    freeaddrinfo(conn->aiList);
+    conn->aiList = NULL;
+    conn->aiNext = NULL;
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// connectNextAddress - the previous candidate failed; try the one after it
+//
+// Returns the new fd, or -1 when the list is exhausted. The caller re-arms epoll
+// on the new descriptor: it is a different socket, and the old one is gone.
+//
+static int connectNextAddress(CorRestClientConn* conn)
+{
+  while (conn->aiNext != NULL)
+  {
+    struct addrinfo* rp = conn->aiNext;
+    conn->aiNext = rp->ai_next;
+
+    int fd = socket(rp->ai_family, SOCK_STREAM, 0);
+    if (fd < 0)
+      continue;
+
+    setNonBlocking(fd);
+
+    int opt = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
+    int r = connect(fd, rp->ai_addr, rp->ai_addrlen);
+    if (r == 0 || errno == EINPROGRESS)
+    {
+      close(conn->fd);
+      conn->fd = fd;
+      return fd;
+    }
+
+    close(fd);
+  }
+
+  return -1;
+}
 
 
 // -----------------------------------------------------------------------------
@@ -555,12 +623,33 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
         {
           if (finishConnect(entry) != 0)
           {
+            //
+            // This candidate refused. A non-blocking connect answers EINPROGRESS
+            // even for a port nobody listens on, so the choice of address can
+            // only be judged here - and "localhost" resolves ::1 before
+            // 127.0.0.1 on most systems while a server may be listening on IPv4
+            // alone. Try the next address before calling the endpoint dead.
+            //
+            int newFd = connectNextAddress(conn);
+
+            if (newFd >= 0)
+            {
+              struct epoll_event nev;
+              nev.data.u32 = (uint32_t)idx;
+              nev.events   = EPOLLOUT;
+              epoll_ctl(epollFd, EPOLL_CTL_ADD, newFd, &nev);
+              break;                       // still CorrStateConnecting
+            }
+
+            aiDone(conn);
             entry->resp.error = CORR_ERR_CONNECT;
             snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
             entry->state = CorrStateDone;
             multi->done++;
             break;
           }
+
+          aiDone(conn);                    // connected: the rest of the list is moot
 
           struct epoll_event ev;
           ev.data.u32 = (uint32_t)idx;
@@ -592,6 +681,7 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
                 corRestClientTlsClose(conn);
               close(conn->fd);
               free(conn->buf);
+              aiDone(conn);
               free(conn);
 
               entry->conn     = NULL;
@@ -687,6 +777,7 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
                 corRestClientTlsClose(conn);
               close(conn->fd);
               free(conn->buf);
+              aiDone(conn);
               free(conn);
 
               entry->conn     = NULL;

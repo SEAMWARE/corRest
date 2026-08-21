@@ -12,6 +12,7 @@
 #define CORREST_CLIENT_H_
 
 #include <stdbool.h>
+#include <netdb.h>                              // struct addrinfo
 #include <stdint.h>
 #include <pthread.h>
 
@@ -58,6 +59,17 @@ typedef struct CorRestClientConn
   char*                       buf;
   int                         bufSize;
   int                         bufLen;
+
+  //
+  // The addresses getaddrinfo returned, and the next one to try. A non-blocking
+  // connect to a closed port answers EINPROGRESS, not a refusal, so which
+  // address works can only be discovered asynchronously - and "localhost"
+  // commonly resolves ::1 ahead of 127.0.0.1 while the listener is IPv4-only.
+  // Both are freed the moment a connection is established.
+  //
+  struct addrinfo*            aiList;
+  struct addrinfo*            aiNext;
+
   struct CorRestClientConn*    next;
 } CorRestClientConn;
 
