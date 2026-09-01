@@ -23,7 +23,21 @@ LIB           = libcorRest.a
 CC            = gcc
 INCLUDE       = -I..
 DFLAGS        =
-CFLAGS        = -O2 -Wall -Werror -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP
+#
+# EXTRA_CFLAGS - the hook for a caller that needs to ADD flags to this build.
+#
+# Not DFLAGS. DFLAGS is a plain variable, so `make DFLAGS=...` REPLACES it -
+# the command line beats the makefile - and a `DFLAGS +=` inside the makefile is
+# ignored along with it, because += never appends to a command-line variable. A
+# caller reaching for DFLAGS to add one flag therefore drops every default this
+# lib sets for itself. DFLAGS is empty here today, so nothing is lost yet; the
+# first -D added to it would be, silently. corNgsild lost -DANSI and
+# -DCOR_WITH_ICU that way and compiled the wrong collation path under coverage.
+#
+# EXTRA_CFLAGS is appended LAST, so a caller's -O0 / -Wno-error also win over the
+# -O2 / -Werror here, which is what an instrumented build needs.
+#
+CFLAGS        = -O2 -Wall -Werror -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 corMimeType.c           \
                 corRestStop.c           \
