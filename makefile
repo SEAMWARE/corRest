@@ -44,6 +44,7 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestStateInit.c      \
                 corRestServiceLookup.c  \
                 corRestVerbFromString.c \
+                corRestUrlValueEncode.c \
                 corRestVersion.c        \
                 corRestProblem.c        \
                 corRestOutHeader.c      \
