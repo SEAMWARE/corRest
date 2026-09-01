@@ -99,3 +99,52 @@ const char* corRestUrlValueEncode(const char* value, KAlloc* kaP)
 
   return out;
 }
+
+
+
+// -----------------------------------------------------------------------------
+//
+// hexVal - value of a hex digit, or -1 if it is not one
+//
+static int hexVal(char c)
+{
+  if ((c >= '0') && (c <= '9'))  return c - '0';
+  if ((c >= 'A') && (c <= 'F'))  return c - 'A' + 10;
+  if ((c >= 'a') && (c <= 'f'))  return c - 'a' + 10;
+
+  return -1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestUrlValueDecode -
+//
+void corRestUrlValueDecode(char* s)
+{
+  if (s == NULL)
+    return;
+
+  char* out = s;
+
+  for (char* p = s; *p != 0; )
+  {
+    if ((p[0] == '%') && (p[1] != 0) && (p[2] != 0))
+    {
+      int hi = hexVal(p[1]);
+      int lo = hexVal(p[2]);
+
+      if ((hi >= 0) && (lo >= 0))
+      {
+        *out++ = (char) ((hi << 4) | lo);
+        p += 3;
+        continue;
+      }
+    }
+
+    *out++ = *p++;
+  }
+
+  *out = 0;
+}

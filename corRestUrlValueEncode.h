@@ -29,4 +29,17 @@
 //
 extern const char* corRestUrlValueEncode(const char* value, KAlloc* kaP);
 
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestUrlValueDecode - decode %XX sequences, IN PLACE
+//
+// The other direction, and the one corRest already does on every incoming
+// in-process request. Kept beside the encoder so the two spellings of the same
+// rule cannot drift apart. Decoding only ever shortens, hence in place; a '%'
+// that does not start two hex digits is left exactly as it is.
+//
+extern void corRestUrlValueDecode(char* s);
+
 #endif  // CORREST_URL_VALUE_ENCODE_H_

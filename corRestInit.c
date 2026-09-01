@@ -32,6 +32,7 @@
 #include "corRest/corRestParamRegistry.h" // corRestParamLookup
 #include "corRest/CorRestStats.h"         // CorRestStats, corRestStats
 #include "corRest/corRestInit.h"          // Own interface
+#include "corRest/corRestUrlValueEncode.h"          // corRestUrlValueDecode
 
 
 
@@ -225,51 +226,6 @@ static void servicePrepare(CorRestService* serviceP, CorRestServiceSimplified* s
 
 // -----------------------------------------------------------------------------
 //
-// hexVal - return value of a hex digit, or -1 if not hex
-//
-static int hexVal(char c)
-{
-  if (c >= '0' && c <= '9')  return c - '0';
-  if (c >= 'A' && c <= 'F')  return c - 'A' + 10;
-  if (c >= 'a' && c <= 'f')  return c - 'a' + 10;
-  return -1;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// percentDecode - decode %XX sequences in-place
-//
-static void percentDecode(char* s)
-{
-  char* out = s;
-
-  for (char* p = s; *p != '\0'; )
-  {
-    if (p[0] == '%' && p[1] != '\0' && p[2] != '\0')
-    {
-      int hi = hexVal(p[1]);
-      int lo = hexVal(p[2]);
-
-      if (hi >= 0 && lo >= 0)
-      {
-        *out++ = (char)((hi << 4) | lo);
-        p += 3;
-        continue;
-      }
-    }
-
-    *out++ = *p++;
-  }
-
-  *out = '\0';
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // addUriParam - add URI parameter to dynamic array, growing if needed
 //
 static void addUriParam(char* name, char* value)
@@ -338,9 +294,9 @@ static void parseUriParams(void)
     }
 
     // Percent-decode name and value
-    percentDecode(name);
+    corRestUrlValueDecode(name);
     if (value[0] != '\0')
-      percentDecode(value);
+      corRestUrlValueDecode(value);
 
     addUriParam(name, value);
   }
