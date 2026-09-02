@@ -77,21 +77,6 @@ int corRestClientTlsInit(void)
 
 // -----------------------------------------------------------------------------
 //
-// corRestClientTlsCleanup - Free global SSL_CTX
-//
-void corRestClientTlsCleanup(void)
-{
-  if (sslCtx != NULL)
-  {
-    SSL_CTX_free(sslCtx);
-    sslCtx = NULL;
-  }
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // corRestClientTlsConnect - Perform TLS handshake on an existing connection
 //
 int corRestClientTlsConnect(CorRestClientConn* conn)

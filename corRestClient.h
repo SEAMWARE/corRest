@@ -166,7 +166,6 @@ typedef struct CorRestClientMulti CorRestClientMulti;
 // Init / Cleanup
 //
 extern int   corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
-extern void  corRestClientCleanup(void);
 
 // Default per-request timeout used by corRestClientRequestInit when the
 // caller doesn't override it via corRestClientRequestTimeout. Settable at
@@ -189,7 +188,6 @@ extern const char* corRestClientUserAgent;
 extern void  corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, KAlloc* allocP);
 extern void  corRestClientRequestHeader(CorRestClientRequest* req, const char* name, const char* value);
 extern void  corRestClientRequestBody(CorRestClientRequest* req, const char* body, int bodyLen);
-extern void  corRestClientRequestJsonBody(CorRestClientRequest* req, KjNode* json);
 extern void  corRestClientRequestTimeout(CorRestClientRequest* req, int connectMs, int requestMs);
 
 
@@ -206,8 +204,6 @@ extern int   corRestClientSend(CorRestClientRequest* req, CorRestClientResponse*
 //
 // Convenience functions
 //
-extern int   corRestClientGet(const char* url, KAlloc* allocP, KjNode** responseP);
-extern int   corRestClientPost(const char* url, KjNode* body, KAlloc* allocP, KjNode** responseP);
 
 
 
@@ -240,7 +236,6 @@ extern int                      corRestClientMultiAdd(CorRestClientMulti* multi,
                                                      KAlloc* allocP, void* userData);
 extern int                      corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs);
 extern CorRestClientResponse*    corRestClientMultiResponse(CorRestClientMulti* multi, int index);
-extern void*                    corRestClientMultiUserData(CorRestClientMulti* multi, int index);
 extern void                     corRestClientMultiDestroy(CorRestClientMulti* multi);
 
 
@@ -250,7 +245,6 @@ extern void                     corRestClientMultiDestroy(CorRestClientMulti* mu
 // Pool management (used internally, exposed for testing)
 //
 extern int                corRestClientPoolInit(int maxIdlePerHost, int idleTimeoutSec);
-extern void               corRestClientPoolDestroy(void);
 extern CorRestClientConn*  corRestClientPoolGet(const char* host, unsigned short port, bool tls);
 extern void               corRestClientPoolPut(CorRestClientConn* conn);
 
@@ -262,7 +256,6 @@ extern void               corRestClientPoolPut(CorRestClientConn* conn);
 //
 extern int   corRestClientTlsInit(void);
 extern void  corRestClientTlsInsecureSet(bool onoff);
-extern void  corRestClientTlsCleanup(void);
 extern int   corRestClientTlsConnect(CorRestClientConn* conn);
 extern int   corRestClientTlsRead(CorRestClientConn* conn, char* buf, int len);
 extern int   corRestClientTlsWrite(CorRestClientConn* conn, const char* buf, int len);

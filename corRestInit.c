@@ -30,7 +30,6 @@
 #include "corRest/corRestHooks.h"         // CorRestHook, etc.
 #include "corRest/corRestProblem.h"       // COR_REST_ERROR_*, corRestProblem
 #include "corRest/corRestParamRegistry.h" // corRestParamLookup
-#include "corRest/CorRestStats.h"         // CorRestStats, corRestStats
 #include "corRest/corRestInit.h"          // Own interface
 #include "corRest/corRestUrlValueEncode.h"          // corRestUrlValueDecode
 
@@ -42,7 +41,6 @@
 //
 CorRestServiceVector   corRestServiceV[CorVerbs];
 struct MHD_Daemon*    corRestDaemon = NULL;
-static CorRestMetrics* metricsP = NULL;
 
 
 
@@ -62,17 +60,6 @@ void corRestHttpsServerCredentialsSet(char* keyPem, char* certPem)
 {
   httpsServerKey  = keyPem;
   httpsServerCert = certPem;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// corRestMetricsSet -
-//
-void corRestMetricsSet(CorRestMetrics* metrics)
-{
-  metricsP = metrics;
 }
 
 
@@ -1287,28 +1274,6 @@ static enum MHD_Result mhdConnectionHandler
 
   enum MHD_Result ret = MHD_queue_response(connection, corRest.out.httpStatusCode, response);
   MHD_destroy_response(response);
-
-  // Update Prometheus metrics (if registered by application)
-  if (metricsP != NULL)
-  {
-    if (metricsP->requests != NULL)
-      kpromCounterInc(metricsP->requests);
-
-    if (metricsP->responseBytes != NULL)
-      kpromCounterAdd(metricsP->responseBytes, responseBodySize);
-
-    if (corRest.out.httpStatusCode >= 400 && metricsP->requestErrors != NULL)
-      kpromCounterInc(metricsP->requestErrors);
-
-    if (metricsP->requestDuration != NULL)
-    {
-      struct timespec now;
-      clock_gettime(CLOCK_MONOTONIC, &now);
-      uint64_t nowNs  = (uint64_t) now.tv_sec * 1000000000ULL + (uint64_t) now.tv_nsec;
-      double   durSec = (double)(nowNs - corRest.requestStartTimeMono) / 1000000000.0;
-      kpromHistogramObserve(metricsP->requestDuration, durSec);
-    }
-  }
 
   return ret;
 }

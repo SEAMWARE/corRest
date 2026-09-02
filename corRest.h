@@ -22,7 +22,6 @@
 #include "corRest/corRestProblem.h"
 #include "corRest/corRestHooks.h"
 #include "corRest/corRestParamRegistry.h"
-#include "corRest/CorRestStats.h"
 #include "corRest/corRestTraceLevels.h"
 #include "corRest/corRestUrlValueEncode.h"
 #include "corRest/corRestClient.h"

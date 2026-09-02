@@ -956,20 +956,6 @@ CorRestClientResponse* corRestClientMultiResponse(CorRestClientMulti* multi, int
 
 // -----------------------------------------------------------------------------
 //
-// corRestClientMultiUserData - Get user data for entry at index
-//
-void* corRestClientMultiUserData(CorRestClientMulti* multi, int index)
-{
-  if (index < 0 || index >= multi->count)
-    return NULL;
-
-  return multi->entries[index].userData;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // corRestClientMultiDestroy - Free the multi engine
 //
 void corRestClientMultiDestroy(CorRestClientMulti* multi)
