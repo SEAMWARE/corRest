@@ -134,47 +134,6 @@ int corRestClientPoolInit(int maxIdlePerHost, int idleTimeoutSec)
 
 // -----------------------------------------------------------------------------
 //
-// corRestClientPoolDestroy - Destroy the pool, close all idle connections
-//
-void corRestClientPoolDestroy(void)
-{
-  if (!poolInited)
-    return;
-
-  pthread_mutex_lock(&pool.mutex);
-
-  for (int i = 0; i < CORR_POOL_BUCKETS; i++)
-  {
-    CorRestClientConn* c = pool.buckets[i].head;
-
-    while (c != NULL)
-    {
-      CorRestClientConn* next = c->next;
-
-      if (c->ssl != NULL)
-        corRestClientTlsClose(c);
-      if (c->fd >= 0)
-        close(c->fd);
-      free(c->buf);
-      free(c);
-      c = next;
-    }
-
-    pool.buckets[i].head  = NULL;
-    pool.buckets[i].count = 0;
-  }
-
-  pool.totalIdle = 0;
-  pthread_mutex_unlock(&pool.mutex);
-  pthread_mutex_destroy(&pool.mutex);
-
-  poolInited = false;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // connIsAlive - peek at the socket; returns false on EOF (peer FIN'd) or
 // any error other than "would-block". A pooled connection that has been
 // half-closed by the remote end will return EOF here, letting us evict it

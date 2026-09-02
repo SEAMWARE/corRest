@@ -19,11 +19,10 @@ its own.
 - **Per-request state** — a thread-local request context (`corRest`) bound for the
   duration of a connection.
 - **HTTP client** — request builder, JSON bodies, per-request timeouts, response
-  header access; plus one-line `GET`/`POST` convenience wrappers.
+  header access.
 - **Parallel multi-client** — fire N requests and harvest them together (used for
   distributed-operation fan-out).
 - **Connection pool + TLS** — keep-alive pooling per host and an OpenSSL transport.
-- **Prometheus stats** — request counters via `kprom`.
 
 ## API reference
 
@@ -78,19 +77,13 @@ thread-local per-request state.
 
 ```c
 int  corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
-void corRestClientCleanup(void);
 
 // Request builder
 void corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, KAlloc* allocP);
 void corRestClientRequestHeader(CorRestClientRequest* req, const char* name, const char* value);
 void corRestClientRequestBody(CorRestClientRequest* req, const char* body, int bodyLen);
-void corRestClientRequestJsonBody(CorRestClientRequest* req, KjNode* json);
 void corRestClientRequestTimeout(CorRestClientRequest* req, int connectMs, int requestMs);
 int  corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp);
-
-// Convenience one-liners
-int  corRestClientGet(const char* url, KAlloc* allocP, KjNode** responseP);
-int  corRestClientPost(const char* url, KjNode* body, KAlloc* allocP, KjNode** responseP);
 
 const char* corRestClientResponseHeader(CorRestClientResponse* resp, const char* name);
 ```
@@ -158,7 +151,6 @@ Sibling k-lib repos (one `.a` each):
 - [`kbase`](https://gitlab.com/kzangeli/kbase) — core utilities
 - [`klog`](https://gitlab.com/kzangeli/klog) — logging
 - [`ktrace`](https://gitlab.com/kzangeli/ktrace) — trace levels
-- [`kprom`](https://gitlab.com/kzangeli/kprom) — Prometheus metrics
 
 System libraries: `libmicrohttpd` (HTTP server), `openssl` (`ssl`/`crypto`, TLS
 client), `pthread`, `m`.

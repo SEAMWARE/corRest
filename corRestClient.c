@@ -84,23 +84,6 @@ int corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgen
 
 // -----------------------------------------------------------------------------
 //
-// corRestClientCleanup - Tear down the client subsystem
-//
-void corRestClientCleanup(void)
-{
-  corRestClientPoolDestroy();
-
-  if (tlsInited)
-  {
-    corRestClientTlsCleanup();
-    tlsInited = false;
-  }
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // urlParse - Parse URL into scheme, host, port, path
 //
 // Parses "http://host:port/path" and "https://host:port/path" by scanning
@@ -230,17 +213,6 @@ void corRestClientRequestBody(CorRestClientRequest* req, const char* body, int b
 {
   req->body    = (char*)body;
   req->bodyLen = bodyLen;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// corRestClientRequestJsonBody - Set JSON body (auto-rendered on send)
-//
-void corRestClientRequestJsonBody(CorRestClientRequest* req, KjNode* json)
-{
-  req->bodyJson = json;
 }
 
 
@@ -861,58 +833,6 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
   // No auto-parse of JSON responses - caller can parse manually if needed
 
   return 0;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// corRestClientGet - Convenience GET
-//
-int corRestClientGet(const char* url, KAlloc* allocP, KjNode** responseP)
-{
-  CorRestClientRequest   req;
-  CorRestClientResponse  resp;
-
-  *responseP = NULL;
-
-  corRestClientRequestInit(&req, CorVerbGet, url, allocP);
-
-  int s = corRestClientSend(&req, &resp);
-  if (s != 0)
-    return s;
-
-  if (resp.bodyJson != NULL)
-    *responseP = resp.bodyJson;
-
-  return resp.statusCode;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// corRestClientPost - Convenience POST with JSON body
-//
-int corRestClientPost(const char* url, KjNode* body, KAlloc* allocP, KjNode** responseP)
-{
-  CorRestClientRequest   req;
-  CorRestClientResponse  resp;
-
-  *responseP = NULL;
-
-  corRestClientRequestInit(&req, CorVerbPost, url, allocP);
-  if (body != NULL)
-    corRestClientRequestJsonBody(&req, body);
-
-  int s = corRestClientSend(&req, &resp);
-  if (s != 0)
-    return s;
-
-  if (resp.bodyJson != NULL)
-    *responseP = resp.bodyJson;
-
-  return resp.statusCode;
 }
 
 
