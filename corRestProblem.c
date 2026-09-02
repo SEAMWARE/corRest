@@ -9,7 +9,7 @@
 #include <stdarg.h>                     // va_list, va_start, va_end
 #include <stdio.h>                      // vsnprintf
 
-#include "kbase/kLibLog.h"              // kLogFunction
+#include "ktrace/ktOut.h"               // ktOut
 #include "corRest/CorRestState.h"         // corRest
 #include "corRest/corRestProblem.h"       // Own interface
 
@@ -43,9 +43,11 @@ void corRestProblemFunction
 
   //
   // Log the error at the caller's location (same technique as ldError): the
-  // macro forwards __FILE__/__LINE__/__FUNCTION__, handed straight to
-  // kLogFunction so the trace points at the detection site, not corRestProblem.c.
+  // macro forwards __FILE__/__LINE__/__FUNCTION__, handed straight to the trace
+  // so it points at the detection site, not corRestProblem.c.
   //
-  if (kLogFunction != NULL)
-    kLogFunction(1, 0, fileName, lineNo, functionName, "%d %s: %s", statusCode, title, corRest.out.problemDetail);
+  // ktOut() rather than KT_E(): KT_E captures __FILE__ and __LINE__ at ITS OWN
+  // call site, which would point every problem the library reports at this line.
+  //
+  ktOut(fileName, lineNo, functionName, 'E', -1, "%d %s: %s", statusCode, title, corRest.out.problemDetail);
 }
