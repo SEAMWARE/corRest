@@ -56,12 +56,44 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestClientTls.c      \
                 corRestClientMulti.c
 
-LIB_OBJS      = $(LIB_SOURCES:c=o)
-LIB_DEPS      = $(LIB_SOURCES:c=d)
+#
+# BUILD - which flavour of build this is, and where its objects live.
+#
+# Objects used to sit next to their sources, one set for every flavour, and that
+# is a silent-wrong-answer machine: `make coverage` leaves instrumented objects
+# behind, a later ordinary build finds them NEWER than the sources and relinks
+# them into a binary that calls itself ordinary. This lib had the sharper end of
+# it - its own test binary links without -lgcov and every instrumented object
+# then wants __gcov_init, so the build failed outright rather than lying.
+#
+# A plain variable and not a target-specific one on purpose: target-specific
+# variables (`debug: CFLAGS += -g`) are not visible when the makefile is parsed,
+# so a directory derived from them would be the same directory for every target.
+#
+BUILD        ?= debug
+OBJDIR       := obj/$(BUILD)
+
+ifeq ($(BUILD),debug)
+CFLAGS       += -g -DDEBUG
+endif
+
+LIB_OBJS      = $(addprefix $(OBJDIR)/,$(LIB_SOURCES:.c=.o))
+LIB_DEPS      = $(addprefix $(OBJDIR)/,$(LIB_SOURCES:.c=.d))
+
+#
+# $(OBJDIR)/.flags - the flags these objects were built with.
+#
+# The directory separates the flavours; this catches a change WITHIN one. A
+# caller adding EXTRA_CFLAGS changes the compile line and nothing else: sources
+# are untouched, objects stay newer than them, and make rebuilds nothing. The
+# stamp is rewritten only when the flags actually differ, so its timestamp moves
+# exactly when a rebuild is due, and every object depends on it.
+#
+FLAGSTAMP    := $(OBJDIR)/.flags
 
 TEST          = corRestTest
 TEST_SOURCES  = corRestTest.c
-TEST_OBJS     = $(TEST_SOURCES:c=o)
+TEST_OBJS     = $(addprefix $(OBJDIR)/,$(TEST_SOURCES:.c=.o))
 
 SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../klog -L../ktrace
 SO_LIBS       = -lkalloc -lkjson -lklog -lktrace -lkbase -lmicrohttpd -lssl -lcrypto -lpthread
@@ -69,9 +101,32 @@ SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../kjson:$$ORIGIN/../kba
 
 LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../klog/libklog.a ../ktrace/libktrace.a ../kbase/libkbase.a -lmicrohttpd -lssl -lcrypto -lpthread -lm
 
-all: $(LIB_SO) $(LIB) $(TEST)
+#
+# Built per flavour, then STAGED to the repo root where every consumer expects
+# them. Unconditionally: comparing timestamps here would reintroduce the bug the
+# object directories fix, since obj/debug/libX.a is easily older than a libX.a
+# left behind by a coverage build.
+#
+all: $(OBJDIR)/$(LIB_SO) $(OBJDIR)/$(LIB) $(OBJDIR)/$(TEST)
+						@cp -f $(OBJDIR)/$(LIB) $(LIB)
+						@cp -f $(OBJDIR)/$(LIB_SO) $(LIB_SO)
+						@cp -f $(OBJDIR)/$(TEST) $(TEST)
+
+$(FLAGSTAMP): FORCE
+						@mkdir -p $(OBJDIR)
+						@echo '$(CFLAGS)' | cmp -s - $@ 2>/dev/null || echo '$(CFLAGS)' > $@
+
+FORCE:
 
 clean:
+						rm -rf obj
+						#
+						# ...and the legacy in-tree artefacts. Objects live under obj/ now, but a tree
+						# built before that still has .o/.d beside its sources - and, worse, .gcno:
+						# gcovr reads those and reports a file nobody compiled as entirely unexecuted,
+						# which once moved the published figure by three points.
+						#
+						rm -f *.o *.d *.gcno *.gcda
 						rm -f *.o
 						rm -f *.a
 						rm -f *~
@@ -86,18 +141,30 @@ di:         install
 
 ci:         clean install
 
-$(LIB):			$(LIB_OBJS) $(LIB_SOURCES)
-						ar r $(LIB) $(LIB_OBJS)
-						ranlib $(LIB)
+#
+# The staged artefacts are targets in their own right, so a caller can ask for
+# `make libcorX.a` and get the current flavour's archive copied into place. The
+# coverage target does exactly that, by name.
+#
+$(LIB): $(OBJDIR)/$(LIB)
+						@cp -f $< $@
 
-$(LIB_SO):	$(LIB_OBJS) $(LIB_SOURCES)
-						$(CC) -shared $(LIB_OBJS) -o $(LIB_SO) $(SO_LDFLAGS) $(SO_LIBS) $(SO_RPATH)
+$(LIB_SO): $(OBJDIR)/$(LIB_SO)
+						@cp -f $< $@
 
-$(TEST):		$(TEST_OBJS) $(LIB)
-						$(CC) -o $(TEST) $(TEST_OBJS) $(LIB) $(LIBS)
+$(OBJDIR)/$(LIB):	$(LIB_OBJS)
+						ar r $@ $(LIB_OBJS)
+						ranlib $@
+
+$(OBJDIR)/$(LIB_SO):	$(LIB_OBJS)
+						$(CC) -shared $(LIB_OBJS) -o $@ $(SO_LDFLAGS) $(SO_LIBS) $(SO_RPATH)
+
+$(OBJDIR)/$(TEST):	$(TEST_OBJS) $(OBJDIR)/$(LIB)
+						$(CC) -o $@ $(TEST_OBJS) $(OBJDIR)/$(LIB) $(LIBS)
 
 
-%.o: %.c
+$(OBJDIR)/%.o: %.c $(FLAGSTAMP)
+						@mkdir -p $(OBJDIR)
 						$(CC) $(CFLAGS) -c $< -o $@
 
 %.i: %.c
