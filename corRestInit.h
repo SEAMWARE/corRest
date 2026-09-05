@@ -32,13 +32,15 @@
 //
 // corRestInit -
 //
-// Initialize the REST library: prepare service lookup tables and start MHD.
+// Initialize the REST library: prepare service lookup tables, start the HTTP
+// server (libmicrohttpd or the built-in one - COR_HTTP_SERVER, decided at
+// compile time) and the worker pool that runs requests off its I/O threads.
 //
 // Parameters:
 //   serviceV      - flat array of service definitions (each includes its verb)
 //   services      - number of entries in serviceV
 //   port          - TCP port to listen on
-//   poolSize      - MHD thread pool size
+//   poolSize      - I/O threads, and one dispatch worker each
 //
 // GET services automatically get HEAD support (same handler, body suppressed).
 // OPTIONS is auto-generated for all registered URL paths.
@@ -53,9 +55,13 @@ extern int corRestInit(CorRestServiceSimplified serviceV[], int services, unsign
 // corRestHttpsServerCredentialsSet - serve HTTPS instead of HTTP
 //
 // Call before corRestInit with the PEM contents (not file paths) of the private
-// key and certificate. The MHD daemon is then started with TLS enabled. NULL
-// (the default) keeps the server on plain HTTP. Used by TLS test receivers
-// (e.g. ftClient), not by the broker.
+// key and certificate; the server is then started with TLS enabled. NULL (the
+// default) keeps it on plain HTTP. Used by TLS test receivers (e.g. ftClient),
+// not by the broker.
+//
+// ⚠️ The BUILT-IN server has no TLS, and corRestInit REFUSES to start rather
+// than quietly serving the port in the clear. Build with COR_HTTP_SERVER=mhd
+// for an HTTPS listener.
 //
 extern void corRestHttpsServerCredentialsSet(char* keyPem, char* certPem);
 
@@ -66,8 +72,8 @@ extern void corRestHttpsServerCredentialsSet(char* keyPem, char* certPem);
 // corRestProcessRequest - run the request-dispatch core on the bound corRest state
 //
 // Consumes corRest.in, produces corRest.out (incl. the rendered body in
-// corRest.out.payload / payloadSize). Connection-free — the MHD send lives in the
-// connection handler.
+// corRest.out.payload / payloadSize). Connection-free — the send lives in the
+// HTTP backend's connection handler.
 //
 extern void corRestProcessRequest(void);
 

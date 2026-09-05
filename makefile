@@ -51,24 +51,34 @@ DFLAGS        =
 # In CFLAGS and not DFLAGS on purpose - see the note above: a caller who passes
 # DFLAGS on the command line would drop these along with every other default.
 #
+# The value picks the backend SOURCE FILE as well as the defines: the two
+# corRestBackend*.c files are alternatives, and compiling the unused one would
+# need the library it exists to avoid.
+#
 COR_HTTP_SERVER ?= mhd
 ifeq ($(COR_HTTP_SERVER),mhd)
-  HTTP_SERVER_FLAGS = -DCOR_HTTP_SERVER_MHD=1 -DCOR_HTTP_SERVER_BUILTIN=0
+  HTTP_SERVER_FLAGS   = -DCOR_HTTP_SERVER_MHD=1 -DCOR_HTTP_SERVER_BUILTIN=0
+  HTTP_SERVER_SOURCE  = corRestBackendMhd.c
+  HTTP_SERVER_LIBS    = -lmicrohttpd
+  HTTP_SERVER_ARCHIVE =
 else ifeq ($(COR_HTTP_SERVER),builtin)
+  HTTP_SERVER_FLAGS   = -DCOR_HTTP_SERVER_MHD=0 -DCOR_HTTP_SERVER_BUILTIN=1
+  HTTP_SERVER_SOURCE  = corRestBackendBuiltin.c
+  HTTP_SERVER_LIBS    =
   #
-  # Refused rather than built: the flags below are right, and the server backend
-  # they select does not exist in this repo yet, so a build would fail at link
-  # with a pile of missing MHD symbols and no clue why. The switch says what it
-  # is waiting for instead.
+  # corHttp is a sibling repo and a static archive, like every other lib here.
+  # It is NOT folded into libcorRest.a - an archive cannot contain another one -
+  # so a consumer linking the built-in flavour links both, which is what
+  # coraine's CMakeLists does.
   #
-  $(error COR_HTTP_SERVER=builtin: the built-in HTTP server is not wired into this library yet - use 'mhd')
-  HTTP_SERVER_FLAGS = -DCOR_HTTP_SERVER_MHD=0 -DCOR_HTTP_SERVER_BUILTIN=1
+  HTTP_SERVER_ARCHIVE = ../corHttp/libcorHttp.a
 else
   $(error COR_HTTP_SERVER must be 'mhd' or 'builtin', not '$(COR_HTTP_SERVER)')
 endif
 
 CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
+                $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
                 corRestStop.c           \
                 corRestStateInit.c      \
@@ -126,10 +136,10 @@ TEST_SOURCES  = corRestTest.c
 TEST_OBJS     = $(addprefix $(OBJDIR)/,$(TEST_SOURCES:.c=.o))
 
 SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../klog -L../ktrace
-SO_LIBS       = -lkalloc -lkjson -lklog -lktrace -lkbase -lmicrohttpd -lssl -lcrypto -lpthread
+SO_LIBS       = -lkalloc -lkjson -lklog -lktrace -lkbase $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread
 SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../kjson:$$ORIGIN/../kbase:$$ORIGIN/../klog:$$ORIGIN/../ktrace'
 
-LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../klog/libklog.a ../ktrace/libktrace.a ../kbase/libkbase.a -lmicrohttpd -lssl -lcrypto -lpthread -lm
+LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../klog/libklog.a ../ktrace/libktrace.a ../kbase/libkbase.a $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread -lm
 
 #
 # Built per flavour, then STAGED to the repo root where every consumer expects
@@ -182,7 +192,14 @@ $(LIB): $(OBJDIR)/$(LIB)
 $(LIB_SO): $(OBJDIR)/$(LIB_SO)
 						@cp -f $< $@
 
+#
+# Removed and rebuilt, never updated in place. `ar r` REPLACES and ADDS but
+# never removes, so an archive built once with corRestBackendMhd.o keeps it
+# after a switch to the built-in backend - and the link then has two definitions
+# of every corRestBackend* function, one of which wants libmicrohttpd.
+#
 $(OBJDIR)/$(LIB):	$(LIB_OBJS)
+						@rm -f $@
 						ar r $@ $(LIB_OBJS)
 						ranlib $@
 
