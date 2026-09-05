@@ -37,7 +37,37 @@ DFLAGS        =
 # EXTRA_CFLAGS is appended LAST, so a caller's -O0 / -Wno-error also win over the
 # -O2 / -Werror here, which is what an instrumented build needs.
 #
-CFLAGS        = -O2 -Wall -Werror -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
+#
+# COR_HTTP_SERVER - which HTTP server this build carries. Two, and exactly one.
+#
+#   mhd      libmicrohttpd, an external shared library
+#   builtin  the epoll server in this repo, no external dependency
+#
+# Emitted as a 0/1 PAIR rather than one flag, so the source reads
+# `#if COR_HTTP_SERVER_MHD` and -Wundef turns a misspelling into a compile error
+# instead of silently selecting the other implementation. Same discipline as the
+# COR_FEATURE_* defines the broker compiles with.
+#
+# In CFLAGS and not DFLAGS on purpose - see the note above: a caller who passes
+# DFLAGS on the command line would drop these along with every other default.
+#
+COR_HTTP_SERVER ?= mhd
+ifeq ($(COR_HTTP_SERVER),mhd)
+  HTTP_SERVER_FLAGS = -DCOR_HTTP_SERVER_MHD=1 -DCOR_HTTP_SERVER_BUILTIN=0
+else ifeq ($(COR_HTTP_SERVER),builtin)
+  #
+  # Refused rather than built: the flags below are right, and the server backend
+  # they select does not exist in this repo yet, so a build would fail at link
+  # with a pile of missing MHD symbols and no clue why. The switch says what it
+  # is waiting for instead.
+  #
+  $(error COR_HTTP_SERVER=builtin: the built-in HTTP server is not wired into this library yet - use 'mhd')
+  HTTP_SERVER_FLAGS = -DCOR_HTTP_SERVER_MHD=0 -DCOR_HTTP_SERVER_BUILTIN=1
+else
+  $(error COR_HTTP_SERVER must be 'mhd' or 'builtin', not '$(COR_HTTP_SERVER)')
+endif
+
+CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 corMimeType.c           \
                 corRestStop.c           \
