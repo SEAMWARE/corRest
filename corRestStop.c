@@ -7,10 +7,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 #include <stdlib.h>                     // free
-#include <microhttpd.h>
 
 #include "corRest/CorRestVerb.h"          // CorVerbs
 #include "corRest/CorRestService.h"       // CorRestServiceVector
+#include "corRest/corRestBackend.h"       // corRestBackendStop, corRestWorkerPoolStop
 
 
 
@@ -19,8 +19,6 @@
 // Globals (defined in corRestInit.c)
 //
 extern CorRestServiceVector   corRestServiceV[];
-extern struct MHD_Daemon*    corRestDaemon;
-extern void                  corRestWorkerPoolStop(void);
 
 
 
@@ -30,16 +28,13 @@ extern void                  corRestWorkerPoolStop(void);
 //
 void corRestStop(void)
 {
-  // Drain + join the async worker pool BEFORE stopping the daemon: this clears
+  // Drain + join the async worker pool BEFORE stopping the server: this clears
   // any suspended connections (resuming across MHD_stop_daemon is an API
-  // violation) and stops new suspensions.
+  // violation, and the built-in server would be tearing down a connection a
+  // worker still holds) and stops new suspensions.
   corRestWorkerPoolStop();
 
-  if (corRestDaemon != NULL)
-  {
-    MHD_stop_daemon(corRestDaemon);
-    corRestDaemon = NULL;
-  }
+  corRestBackendStop();
 
   for (int verb = 0; verb < CorVerbs; verb++)
   {

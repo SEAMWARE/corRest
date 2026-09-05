@@ -12,8 +12,6 @@
 #include <time.h>                       // clock_gettime, CLOCK_MONOTONIC
 #include <pthread.h>                    // pthread_* (async worker pool)
 
-#include <microhttpd.h>
-
 #include "kalloc/kaAlloc.h"             // kaAlloc
 #include "kalloc/kaStrdup.h"            // kaStrdup
 #include "kjson/kjParse.h"              // kjParse
@@ -30,6 +28,7 @@
 #include "corRest/corRestHooks.h"         // CorRestHook, etc.
 #include "corRest/corRestProblem.h"       // COR_REST_ERROR_*, corRestProblem
 #include "corRest/corRestParamRegistry.h" // corRestParamLookup
+#include "corRest/corRestBackend.h"       // corRestBackendStart, corRestBackendResume
 #include "corRest/corRestInit.h"          // Own interface
 #include "corRest/corRestUrlValueEncode.h"          // corRestUrlValueDecode
 
@@ -40,7 +39,6 @@
 // Globals
 //
 CorRestServiceVector   corRestServiceV[CorVerbs];
-struct MHD_Daemon*    corRestDaemon = NULL;
 
 
 
@@ -51,7 +49,8 @@ struct MHD_Daemon*    corRestDaemon = NULL;
 // The broker listens over plain HTTP and never sets these. A test server such
 // as ftClient that must receive notifications over TLS calls
 // corRestHttpsServerCredentialsSet() with the key+certificate PEM before
-// corRestInit; the MHD daemon is then started with TLS enabled.
+// corRestInit; the backend is then started with TLS enabled - and a backend
+// that has no TLS refuses to start rather than serving the port in the clear.
 //
 static char* httpsServerKey  = NULL;
 static char* httpsServerCert = NULL;
@@ -78,6 +77,7 @@ extern CorRestHook            corRestPostResponseHook;
 extern CorRestUserDataAllocHook corRestUserDataAllocHookF;
 extern CorRestUserDataFreeHook  corRestUserDataFreeHookF;
 extern unsigned long long    corRestMaxRequestSize;
+extern CorRestCorsConfig     corRestCors;
 
 
 
@@ -213,9 +213,9 @@ static void servicePrepare(CorRestService* serviceP, CorRestServiceSimplified* s
 
 // -----------------------------------------------------------------------------
 //
-// addUriParam - add URI parameter to dynamic array, growing if needed
+// corRestUriParamAdd - add URI parameter to dynamic array, growing if needed
 //
-static void addUriParam(char* name, char* value)
+void corRestUriParamAdd(char* name, char* value)
 {
   if (corRest.in.uriParamCount >= corRest.in.uriParamSize)
   {
@@ -241,9 +241,15 @@ static void addUriParam(char* name, char* value)
 
 // -----------------------------------------------------------------------------
 //
-// parseUriParams - parse query string into key-value pairs with percent-decoding
+// corRestUriParamsParse - split the query string, percent-decoding as it goes
 //
-static void parseUriParams(void)
+// IN PLACE, over corRest.in.urlParams: the buffer comes out with a NUL where
+// every '&' and the first '=' of each parameter was, so the raw query string
+// does not survive this. Nothing reads it afterwards (purgeEntities rebuilds
+// the query from the parsed array for exactly that reason), and the alternative
+// - a second copy on every request that carries a query - buys nothing.
+//
+void corRestUriParamsParse(void)
 {
   if (corRest.in.urlParams == NULL)
     return;
@@ -285,7 +291,7 @@ static void parseUriParams(void)
     if (value[0] != '\0')
       corRestUrlValueDecode(value);
 
-    addUriParam(name, value);
+    corRestUriParamAdd(name, value);
   }
 }
 
@@ -293,13 +299,13 @@ static void parseUriParams(void)
 
 // -----------------------------------------------------------------------------
 //
-// addHttpHeader - append a request header to corRest.in, extracting well-knowns
+// corRestHttpHeaderAdd - append a request header to corRest.in, extracting well-knowns
 //
-// Shared by the MHD header iterator and the in-process self-forward path. The
+// Shared by the HTTP backends and the in-process self-forward path. The
 // key/value pointers are borrowed (not copied) — the caller keeps them alive
 // for the request's lifetime.
 //
-static void addHttpHeader(const char* key, const char* value)
+void corRestHttpHeaderAdd(const char* key, const char* value)
 {
   if (corRest.in.httpHeaderCount >= corRest.in.httpHeaderSize)
   {
@@ -333,69 +339,12 @@ static void addHttpHeader(const char* key, const char* value)
 
 // -----------------------------------------------------------------------------
 //
-// mhdHeaderIterator - MHD callback to collect request headers
-//
-static enum MHD_Result mhdHeaderIterator
-(
-  void*              cls,
-  enum MHD_ValueKind kind,
-  const char*        key,
-  const char*        value
-)
-{
-  addHttpHeader(key, value);
-  return MHD_YES;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// mhdUriParamIterator - MHD callback to collect URI query parameters
-//
-// MHD strips query params from the URL and provides them via MHD_GET_ARGUMENT_KIND.
-// The values are already percent-decoded by MHD.
-//
-static enum MHD_Result mhdUriParamIterator
-(
-  void*              cls,
-  enum MHD_ValueKind kind,
-  const char*        key,
-  const char*        value
-)
-{
-  if (corRest.in.uriParamCount >= corRest.in.uriParamSize)
-  {
-    int newSize = corRest.in.uriParamSize + COR_REST_KV_GROW_SIZE;
-    CorRestKeyValue* newV = (CorRestKeyValue*) kaAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
-
-    if (newV == NULL)
-      return MHD_YES;
-
-    memcpy(newV, corRest.in.uriParamV, corRest.in.uriParamCount * sizeof(CorRestKeyValue));
-
-    corRest.in.uriParamV    = newV;
-    corRest.in.uriParamSize = newSize;
-  }
-
-  corRest.in.uriParamV[corRest.in.uriParamCount].key   = (char*) key;
-  corRest.in.uriParamV[corRest.in.uriParamCount].value  = (char*) (value ? value : "");
-  corRest.in.uriParamV[corRest.in.uriParamCount].bit    = 0;   // resolved in the allowlist pass
-  corRest.in.uriParamCount++;
-
-  return MHD_YES;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
 // corRestProcessRequest - run the request-dispatch core on the bound corRest state
 //
 // Connection-free: consumes corRest.in (verb, url, headers, params, requestTree)
 // and produces corRest.out (status, headers, problem / responseTree) plus the
-// final rendered body in corRest.out.payload / payloadSize. The MHD send stays in
-// the connection handler. Reusable for an in-process self-forward (a distop
+// final rendered body in corRest.out.payload / payloadSize. The send stays in
+// the backend's connection handler. Reusable for an in-process self-forward (a distop
 // whose endpoint is this broker): bind corRestP to an inner state, populate its
 // .in, call this, read its .out — no socket round-trip.
 //
@@ -825,11 +774,11 @@ int corRestProcessInProcess(CorRestVerb       verb,
   corRest.requestStartTimeMono = outerP->requestStartTimeMono;
 
   // URI params (corRestStateInit split a trailing ?query into corRest.in.urlParams)
-  parseUriParams();
+  corRestUriParamsParse();
 
   // Request headers — borrowed; the (outer) arena they live in stays alive
   for (int i = 0; i < headerCount; i++)
-    addHttpHeader(headerV[i].key, headerV[i].value);
+    corRestHttpHeaderAdd(headerV[i].key, headerV[i].value);
 
   // Body — copy into the inner arena (freed by corRestStateRelease)
   if (body != NULL && bodyLen > 0)
@@ -900,20 +849,20 @@ int corRestProcessInProcess(CorRestVerb       verb,
 //
 // Async worker pool (6d)
 //
-// The MHD I/O threads accept, parse headers and accumulate the body, then
+// The backend's I/O threads accept, parse headers and accumulate the body, then
 // suspend the connection and hand its CorRestState to this pool. A worker binds
 // corRestP to that state and runs the (potentially slow: DB, distops) dispatch
-// off the I/O thread, then resumes the connection — MHD re-invokes the handler,
-// which sends the already-built response. This decouples per-request processing
-// latency from epoll I/O throughput: a slow request no longer blocks the I/O
-// thread from servicing every other connection pinned to it.
+// off the I/O thread, then resumes the connection, and the backend sends the
+// already-built response. This decouples per-request processing latency from
+// epoll I/O throughput: a slow request no longer blocks the I/O thread from
+// servicing every other connection pinned to it.
 //
 // All request state lives in the per-connection CorRestState (arena, kjson,
 // in/out, userData -> per-conn corNgsild), so a worker needs nothing but
 // `corRestP = conP` — the I/O thread already ran corRestStateInit. The deferred
 // notification caches are per-connection too, and still flushed by the
-// post-response hook in mhdRequestCompleted, so notification ordering is
-// unchanged.
+// post-response hook once the response has gone out, so notification ordering
+// is unchanged.
 //
 static pthread_t*       corRestWorkerV    = NULL;
 static int              corRestWorkerCount = 0;
@@ -959,23 +908,42 @@ static void* corRestWorkerMain(void* unused)
       corRestQueueTail = NULL;
     pthread_mutex_unlock(&corRestQueueMtx);
 
+    corRestP = conP;
+
+    //
+    // Second visit: the response has gone out and what is left is the request's
+    // post-response work. Nothing below applies - there is no connection to
+    // resume, and after this the state is gone.
+    //
+    if (conP->asyncFinishing == true)
+    {
+      corRestBackendFinish(conP);
+      corRestP = NULL;
+      continue;
+    }
+
     // Run the dispatch on this worker, bound to the connection's own state.
     // A self-targeted forward (corRestProcessInProcess) runs synchronously
     // inside this same call on this same worker thread — never re-enqueued.
-    corRestP = conP;
     corRestProcessRequest();
     conP->asyncProcessed = true;
-    corRestP = NULL;                // drop the bind; the request leaves this thread
 
-    // Hand the connection back to MHD (ITC wakes the polling thread); MHD
-    // re-invokes mhdConnectionHandler, which sends corRest.out.
-    MHD_resume_connection(conP->mhdConnection);
+    //
+    // Hand the connection back to the backend's event loop. STILL BOUND: the
+    // built-in backend reads corRest.out here to build the response before it
+    // wakes the loop, and unbinding first would leave it reading the fallback
+    // state of this worker thread. After this call the connection may already
+    // be finished and freed by the loop, so nothing below may touch conP.
+    //
+    corRestBackendResume(conP);
+
+    corRestP = NULL;                // drop the bind; the request has left this thread
   }
 
   return NULL;
 }
 
-static int corRestWorkerPoolStart(int workers)
+int corRestWorkerPoolStart(int workers)
 {
   if (workers < 1)
     workers = 1;
@@ -1005,11 +973,11 @@ static int corRestWorkerPoolStart(int workers)
 //
 // corRestWorkerPoolStop - stop new suspensions, drain the queue, join workers
 //
-// Clearing corRestWorkersRun first makes mhdConnectionHandler process inline
+// Clearing corRestWorkersRun first makes the backend's handler process inline
 // again, so no NEW connection is suspended; the workers then drain whatever is
 // already queued (processing + resuming each) before exiting. After this
-// returns there are no suspended connections, so MHD_stop_daemon is safe
-// (suspending across MHD_stop_daemon is an API violation).
+// returns there are no suspended connections, so stopping the backend is safe
+// (resuming across MHD_stop_daemon is an API violation).
 //
 void corRestWorkerPoolStop(void)
 {
@@ -1033,170 +1001,101 @@ void corRestWorkerPoolStop(void)
 
 // -----------------------------------------------------------------------------
 //
-// mhdConnectionHandler - MHD callback, called for each incoming request
+// corRestAsyncPoolUp / corRestAsyncEnqueue - hand this request to a worker
 //
-// MHD calls this multiple times per request:
-//   1. First call:  *con_cls == NULL  -> init corRest state
-//   2. Middle calls: upload_data_size > 0 -> accumulate payload
-//   3. Final call:   upload_data_size == 0 -> parse, dispatch, render, respond
+// Two calls, with the connection suspended between them - see corRestBackend.h.
 //
-static enum MHD_Result mhdConnectionHandler
-(
-  void*                  cls,
-  struct MHD_Connection* connection,
-  const char*            url,
-  const char*            method,
-  const char*            version,
-  const char*            uploadData,
-  size_t*                uploadDataSize,
-  void**                 con_cls
-)
+bool corRestAsyncPoolUp(void)
 {
-  // --- First call: allocate this connection's per-request state ---
-  if (*con_cls == NULL)
+  return corRestWorkersRun;
+}
+
+void corRestAsyncEnqueue(CorRestState* stateP)
+{
+  corRestWorkerEnqueue(stateP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestAsyncFinish - the post-response phase, off the I/O thread
+//
+bool corRestAsyncFinish(CorRestState* stateP)
+{
+  if (corRestWorkersRun == false)
+    return false;
+
+  stateP->asyncFinishing = true;
+  corRestWorkerEnqueue(stateP);
+
+  return true;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestBodyPolicyCheck -
+//
+// § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry Content-Length
+// (411 Length Required, and NO payload). § 6.3.2 — 413 when the announced body
+// exceeds the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are outside the
+// spec's scope and accept bodyless POSTs.
+//
+void corRestBodyPolicyCheck(const char* url, const char* clHeader)
+{
+  if ((corRest.in.verb != CorVerbPost) &&
+      (corRest.in.verb != CorVerbPut)  &&
+      (corRest.in.verb != CorVerbPatch))
+    return;
+
+  if ((url == NULL) || (strncmp(url, "/ngsi-ld/", 9) != 0))
+    return;
+
+  if (clHeader == NULL)
   {
-    KT_V("Request: %s %s", method, url);  // one line per request (verbose mode, -v)
-
-    // Each connection owns its CorRestState (hung on con_cls), so when the
-    // epoll pool thread interleaves connection B's callbacks between
-    // connection A's body-read callbacks it can no longer clobber A's state.
-    // corRestP is bound to it before corRestStateInit (whose memset/init runs
-    // through the corRest macro).
-    CorRestState* conP = (CorRestState*) malloc(sizeof(CorRestState));
-    if (conP == NULL)
-      return MHD_NO;
-    *con_cls = conP;
-    corRestP  = conP;
-
-    corRestStateInit(connection, url, method);
-
-    // Create this connection's application state (e.g. per-conn corNgsild),
-    // stored in corRest.userData and freed in mhdRequestCompleted.
-    if (corRestUserDataAllocHookF != NULL)
-      corRest.userData = corRestUserDataAllocHookF();
-
-    // Capture request start time — REALTIME for timestamps, MONOTONIC for duration metrics
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    corRest.requestStartTime = (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
-
-    struct timespec tsM;
-    clock_gettime(CLOCK_MONOTONIC, &tsM);
-    corRest.requestStartTimeMono = (uint64_t) tsM.tv_sec * 1000000000ULL + (uint64_t) tsM.tv_nsec;
-
-    // Collect request headers from MHD
-    MHD_get_connection_values(connection, MHD_HEADER_KIND, mhdHeaderIterator, NULL);
-
-    // Collect URI query parameters from MHD (already percent-decoded by MHD)
-    MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, mhdUriParamIterator, NULL);
-
-    // § 6.3.4 — POST / PATCH / PUT to NGSI-LD endpoints must carry
-    // Content-Length. § 6.3.2 — 413 when the announced body exceeds
-    // the broker cap. Non-NGSI-LD endpoints (e.g. /admin/*) are
-    // outside the spec's scope and accept bodyless POSTs.
-    if ((corRest.in.verb == CorVerbPost ||
-         corRest.in.verb == CorVerbPut  ||
-         corRest.in.verb == CorVerbPatch) &&
-        url != NULL &&
-        strncmp(url, "/ngsi-ld/", 9) == 0)
-    {
-      const char* clHdr = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Content-Length");
-      if (clHdr == NULL)
-      {
-        // § 6.3.4 — just a 411 status, no body.
-        corRest.out.httpStatusCode    = 411;
-        corRest.in.contentLengthMissing = true;
-      }
-      else if (corRestMaxRequestSize > 0)
-      {
-        unsigned long long cl = strtoull(clHdr, NULL, 10);
-        if (cl > corRestMaxRequestSize)
-        {
-          corRestProblem(413, COR_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
-                        "request body of %llu bytes exceeds broker limit of %llu bytes",
-                        cl, corRestMaxRequestSize);
-        }
-      }
-    }
-
-    return MHD_YES;
+    // § 6.3.4 — just a 411 status, no body.
+    corRest.out.httpStatusCode      = 411;
+    corRest.in.contentLengthMissing = true;
+    return;
   }
 
-  // Subsequent calls (body chunks, final dispatch): rebind corRestP to THIS
-  // connection's state — another connection's callback may have re-pointed
-  // corRestP on this pool thread since our last invocation here.
-  corRestP = (CorRestState*) *con_cls;
-
-  // --- Middle calls: accumulate payload ---
-  if (*uploadDataSize > 0)
+  if (corRestMaxRequestSize > 0)
   {
-    // If the first-call check flagged 411/413, drop the bytes.
-    if (corRest.in.contentLengthMissing || corRest.out.httpStatusCode == 413)
-    {
-      *uploadDataSize = 0;
-      return MHD_YES;
-    }
+    unsigned long long cl = strtoull(clHeader, NULL, 10);
 
-    // Streaming size cap — defends against clients that lie in
-    // Content-Length or use chunked encoding without a length.
-    if (corRestMaxRequestSize > 0 &&
-        (unsigned long long)(corRest.in.payloadSize + *uploadDataSize) > corRestMaxRequestSize)
-    {
+    if (cl > corRestMaxRequestSize)
       corRestProblem(413, COR_REST_ERROR_REQUEST_LENGTH, "Request Entity Too Large",
-                    "request body exceeds broker limit of %llu bytes", corRestMaxRequestSize);
-      *uploadDataSize = 0;
-      return MHD_YES;
-    }
-
-    int needed = corRest.in.payloadSize + *uploadDataSize + 1;
-
-    if (needed > corRest.payloadBufSize)
-    {
-      int newSize = (needed + 4096) & ~4095;
-      char* newBuf = (char*) realloc(corRest.in.payload, newSize);
-      if (newBuf == NULL)
-        return MHD_NO;
-      corRest.in.payload     = newBuf;
-      corRest.payloadBufSize = newSize;
-    }
-
-    memcpy(corRest.in.payload + corRest.in.payloadSize, uploadData, *uploadDataSize);
-    corRest.in.payloadSize += *uploadDataSize;
-    corRest.in.payload[corRest.in.payloadSize] = 0;
-
-    *uploadDataSize = 0;
-    return MHD_YES;
+                    "request body of %llu bytes exceeds broker limit of %llu bytes",
+                    cl, corRestMaxRequestSize);
   }
+}
 
-  // --- Final call: process (off the I/O thread when the pool is up), respond ---
-  if (corRestWorkersRun && !corRest.asyncProcessed)
-  {
-    // Suspend this connection and hand it to a worker so DB/distop latency
-    // doesn't block this epoll thread. The worker runs corRestProcessRequest and
-    // resumes us; MHD then re-invokes this handler with asyncProcessed set and
-    // we fall through to build + send the response. Suspend BEFORE enqueue so a
-    // worker can never resume a not-yet-suspended connection.
-    MHD_suspend_connection(connection);
-    corRestWorkerEnqueue(corRestP);
-    return MHD_YES;
-  }
 
-  if (!corRest.asyncProcessed)
-    corRestProcessRequest();    // pool down (shutdown / tests): run inline here
 
-  char* responseBody     = (corRest.out.payload != NULL) ? corRest.out.payload : (char*) "";
-  int   responseBodySize = corRest.out.payloadSize;
+// -----------------------------------------------------------------------------
+//
+// corRestResponseHeaderVBuild -
+//
+// One implementation of the response-header policy for both backends. The SET
+// and the ORDER are pinned by several hundred functional tests that compare
+// captured responses line by line, so this is a specification rather than a
+// preference - and two copies of it would be two chances to drift.
+//
+int corRestResponseHeaderVBuild(CorRestKeyValue* hv, int max)
+{
+  int n = 0;
 
-  // Send HTTP response
-  // For HEAD: pass the full body — MHD will set Content-Length correctly
-  // but suppress the body in the actual response.
-  struct MHD_Response* response;
-
-  response = MHD_create_response_from_buffer(
-    responseBodySize,
-    (void*) responseBody,
-    MHD_RESPMEM_MUST_COPY
-  );
+  #define HDR_ADD(k, v)                          \
+    do {                                         \
+      if (n < max)                               \
+      {                                          \
+        hv[n].key   = (char*) (k);               \
+        hv[n].value = (char*) (v);               \
+        n++;                                     \
+      }                                          \
+    } while (0)
 
   // Content-Type policy:
   //  - No body (size 0): omit Content-Type — it describes a body there is none
@@ -1208,14 +1107,15 @@ static enum MHD_Result mhdConnectionHandler
   // TS 104-176 specifies bare media types throughout (§ 6.2.3, § 6.3.3,
   // § 6.4.7.2 "exactly equal to the media type"); RFC 8259 defines no charset
   // parameter for application/json — so emit the type verbatim, no charset.
-  if (responseBodySize > 0)
+  if (corRest.out.payloadSize > 0)
   {
     int         code = corRest.out.httpStatusCode;
     const char* ct   = (code == 201 || (code >= 400 && code <= 599))
                        ? "application/json"
                        : corRest.out.contentType;
+
     if (ct != NULL)
-      MHD_add_response_header(response, "Content-Type", ct);
+      HDR_ADD("Content-Type", ct);
   }
 
   // § 6.3.6 Prefer / Preference-Applied: when the client sent a
@@ -1230,20 +1130,19 @@ static enum MHD_Result mhdConnectionHandler
         corRest.in.httpHeaderV[hi].value != NULL &&
         strncasecmp(corRest.in.httpHeaderV[hi].value, "ngsi-ld=", 8) == 0)
     {
-      MHD_add_response_header(response, "Preference-Applied", "ngsi-ld=1.9.1");
+      HDR_ADD("Preference-Applied", "ngsi-ld=1.9.1");
       break;
     }
   }
 
-  // Add custom response headers
+  // The service routine's own headers, in the order it added them
   for (int i = 0; i < corRest.out.headerCount; i++)
-    MHD_add_response_header(response, corRest.out.headerV[i].key, corRest.out.headerV[i].value);
+    HDR_ADD(corRest.out.headerV[i].key, corRest.out.headerV[i].value);
 
   // CORS headers (if configured)
-  extern CorRestCorsConfig corRestCors;
   if (corRestCors.allowOrigin != NULL)
   {
-    MHD_add_response_header(response, "Access-Control-Allow-Origin", corRestCors.allowOrigin);
+    HDR_ADD("Access-Control-Allow-Origin", corRestCors.allowOrigin);
 
     if (corRest.in.verb == CorVerbOptions)
     {
@@ -1252,71 +1151,38 @@ static enum MHD_Result mhdConnectionHandler
       {
         if (strcmp(corRest.out.headerV[i].key, "Allow") == 0)
         {
-          MHD_add_response_header(response, "Access-Control-Allow-Methods", corRest.out.headerV[i].value);
+          HDR_ADD("Access-Control-Allow-Methods", corRest.out.headerV[i].value);
           break;
         }
       }
 
-      const char* ah = corRestCors.allowHeaders ? corRestCors.allowHeaders : "Content-Type, Accept, Link";
-      MHD_add_response_header(response, "Access-Control-Allow-Headers", ah);
+      HDR_ADD("Access-Control-Allow-Headers",
+              corRestCors.allowHeaders ? corRestCors.allowHeaders : "Content-Type, Accept, Link");
 
       if (corRestCors.maxAge > 0)
       {
-        char maxAgeBuf[16];
-        snprintf(maxAgeBuf, sizeof(maxAgeBuf), "%d", corRestCors.maxAge);
-        MHD_add_response_header(response, "Access-Control-Max-Age", maxAgeBuf);
+        //
+        // Rendered into the request arena rather than a local buffer: the
+        // backend sends these AFTER this function has returned, and one of them
+        // does not copy what it is given.
+        //
+        char* maxAgeBuf = (char*) kaAlloc(&corRest.kalloc, 16);
+
+        if (maxAgeBuf != NULL)
+        {
+          snprintf(maxAgeBuf, 16, "%d", corRestCors.maxAge);
+          HDR_ADD("Access-Control-Max-Age", maxAgeBuf);
+        }
       }
     }
 
     if (corRestCors.exposeHeaders != NULL)
-      MHD_add_response_header(response, "Access-Control-Expose-Headers", corRestCors.exposeHeaders);
+      HDR_ADD("Access-Control-Expose-Headers", corRestCors.exposeHeaders);
   }
 
-  enum MHD_Result ret = MHD_queue_response(connection, corRest.out.httpStatusCode, response);
-  MHD_destroy_response(response);
+  #undef HDR_ADD
 
-  return ret;
-}
-
-
-
-// -----------------------------------------------------------------------------
-//
-// mhdRequestCompleted - MHD callback when a request is fully handled
-//
-static void mhdRequestCompleted
-(
-  void*                          cls,
-  struct MHD_Connection*         connection,
-  void**                         con_cls,
-  enum MHD_RequestTerminationCode toe
-)
-{
-  if (*con_cls != NULL)
-  {
-    // Bind to this connection's state before the hook / release touch corRest.
-    CorRestState* conP = (CorRestState*) *con_cls;
-    corRestP = conP;
-
-    // Run post-response hook BEFORE releasing the per-request arena so the
-    // hook can still touch arena-allocated data (e.g. deferred notification
-    // dispatch reading the entity tree built by the service routine).
-    corRestPostResponseHook();
-
-    // Free payload buffer (malloc'd during accumulation, not in kalloc)
-    free(corRest.in.payload);
-    corRest.in.payload = NULL;
-
-    corRestStateRelease();
-
-    // Destroy this connection's application state (per-conn corNgsild, ...).
-    if (corRestUserDataFreeHookF != NULL && corRest.userData != NULL)
-      corRestUserDataFreeHookF(corRest.userData);
-
-    free(conP);
-    *con_cls = NULL;
-    corRestP  = NULL;   // no dangling pointer to freed state on this thread
-  }
+  return n;
 }
 
 
@@ -1458,58 +1324,12 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
     }
   }
 
-  // Start MHD daemon with thread pool. MHD_ALLOW_SUSPEND_RESUME (which bundles
-  // MHD_USE_ITC) lets the I/O threads suspend a connection and hand it to the
-  // async worker pool below; the worker resumes it once the response is built.
   //
-  // When HTTPS server credentials have been set (a TLS test receiver, not the
-  // broker), MHD_USE_TLS is added together with the in-memory key/cert.
-  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME;
-
-  if ((httpsServerKey != NULL) && (httpsServerCert != NULL))
-    corRestDaemon = MHD_start_daemon(
-      flags | MHD_USE_TLS,
-      port,
-      NULL,
-      NULL,
-      mhdConnectionHandler,
-      NULL,
-      MHD_OPTION_NOTIFY_COMPLETED,
-      mhdRequestCompleted,
-      NULL,
-      MHD_OPTION_THREAD_POOL_SIZE,
-      (unsigned int) poolSize,
-      MHD_OPTION_CONNECTION_TIMEOUT,
-      (unsigned int) 30,
-      MHD_OPTION_HTTPS_MEM_KEY,
-      httpsServerKey,
-      MHD_OPTION_HTTPS_MEM_CERT,
-      httpsServerCert,
-      MHD_OPTION_END
-    );
-  else
-    corRestDaemon = MHD_start_daemon(
-      flags,
-      port,
-      NULL,
-      NULL,
-      mhdConnectionHandler,
-      NULL,
-      MHD_OPTION_NOTIFY_COMPLETED,
-      mhdRequestCompleted,
-      NULL,
-      MHD_OPTION_THREAD_POOL_SIZE,
-      (unsigned int) poolSize,
-      MHD_OPTION_CONNECTION_TIMEOUT,
-      (unsigned int) 30,
-      MHD_OPTION_END
-    );
-
-  if (corRestDaemon == NULL)
-  {
-    fprintf(stderr, "corRestInit: MHD_start_daemon failed on port %d\n", port);
+  // The HTTP server itself - libmicrohttpd or the built-in one, decided at
+  // compile time by COR_HTTP_SERVER. It starts its own threads and returns.
+  //
+  if (corRestBackendStart(port, poolSize, httpsServerKey, httpsServerCert) != 0)
     return -1;
-  }
 
   // Async worker pool — one worker per I/O thread. corRestWorkersRun stays false
   // (handler processes inline) if the pool fails to start.

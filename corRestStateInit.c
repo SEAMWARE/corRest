@@ -42,11 +42,11 @@ extern int corRestDefaultPrettySpaces;
 //
 // corRestStateInit -
 //
-void corRestStateInit(struct MHD_Connection* connection, const char* url, const char* method)
+void corRestStateInit(void* connection, const char* url, const char* method)
 {
   memset(&corRest, 0, sizeof(CorRestState));
 
-  corRest.mhdConnection = connection;
+  corRest.connection = connection;
 
   // Initialize kalloc pool (inline buffer first, then malloc-based overflow).
   // 256KB grow chunks: keeps single-shot renderings of ~1000-entity responses
@@ -72,17 +72,7 @@ void corRestStateInit(struct MHD_Connection* connection, const char* url, const 
     corRest.in.urlParams = qMark + 1;
   }
 
-  corRest.in.urlPathLen = strlen(corRest.in.urlPath);
-
-  // Strip a single trailing '/' from the path (except the root "/" itself).
-  // Routes are registered without a trailing slash; clients that send one
-  // (e.g. ETSI test suite: POST /ngsi-ld/v1/entities/) would otherwise
-  // 404 against an exact-match service lookup.
-  if (corRest.in.urlPathLen > 1 && corRest.in.urlPath[corRest.in.urlPathLen - 1] == '/')
-  {
-    corRest.in.urlPath[corRest.in.urlPathLen - 1] = 0;
-    corRest.in.urlPathLen--;
-  }
+  corRestUrlPathNormalize();
 
   // Initialize URI param dynamic array (starts with inline slots)
   corRest.in.uriParamV     = corRest.in.uriParams;
@@ -109,6 +99,31 @@ void corRestStateInit(struct MHD_Connection* connection, const char* url, const 
   corRest.in.payload      = NULL;
   corRest.in.payloadSize  = 0;
   corRest.payloadBufSize  = 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestUrlPathNormalize -
+//
+// Strip a single trailing '/' from the path (except the root "/" itself).
+// Routes are registered without a trailing slash; clients that send one
+// (e.g. ETSI test suite: POST /ngsi-ld/v1/entities/) would otherwise
+// 404 against an exact-match service lookup.
+//
+void corRestUrlPathNormalize(void)
+{
+  if (corRest.in.urlPath == NULL)
+    return;
+
+  corRest.in.urlPathLen = strlen(corRest.in.urlPath);
+
+  if (corRest.in.urlPathLen > 1 && corRest.in.urlPath[corRest.in.urlPathLen - 1] == '/')
+  {
+    corRest.in.urlPath[corRest.in.urlPathLen - 1] = 0;
+    corRest.in.urlPathLen--;
+  }
 }
 
 
