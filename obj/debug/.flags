@@ -1,1 +1,0 @@
--O2 -Wall -Werror -Wundef -fPIC -Wno-unused-function -fstack-protector-all  -DCOR_HTTP_SERVER_MHD=1 -DCOR_HTTP_SERVER_BUILTIN=0 -I.. -MMD -MP  -g -DDEBUG
