@@ -322,6 +322,23 @@ void corRestBackendResume(CorRestState* stateP)
 
 
 
+//
+// corRestHttpLoopsSet - no-op here
+//
+// libmicrohttpd has a thread per connection and no event loop of ours to
+// multiply, so there is nothing for this to do. It exists so that the caller
+// does not have to know which backend it was built against - the same option is
+// accepted either way and simply has no effect on this one.
+//
+void corRestHttpLoopsSet(int loops)
+{
+  (void) loops;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // -----------------------------------------------------------------------------
 //
 // corRestBackendStart -

@@ -84,9 +84,49 @@
 // its own here, which is also what MHD_USE_SELECT_INTERNALLY does on the other
 // side.
 //
-static CorHttpServer  corHttpServer;
-static pthread_t      corHttpThread;
+//
+// corHttpLoops - how many event loops share the listening port
+//
+// One loop reads, parses and WRITES every connection it owns (the workers only
+// run the service routine in between), and that single thread is what keeps the
+// builtin server from filling the machine: measured at 8 cores it used 4.4 of
+// them while libmicrohttpd used 7.9, at a LOWER cost per request - 70.7 us
+// against 89.0 on a small response. The deficit was never cost, it was
+// under-utilisation.
+//
+// So: N loops, each with its own listen socket on the same port (SO_REUSEPORT),
+// its own epoll, its own connection pool and its own resume queue. The kernel
+// hashes each incoming connection to one of them and it stays there for its
+// whole life, so the one-connection-one-writer invariant is preserved exactly.
+//
+// Default 1 - today's behaviour, byte for byte - until there are suite runs and
+// measurements at N > 1 to choose a better one from.
+//
+#define COR_REST_MAX_LOOPS 64
+
+static CorHttpServer  corHttpServerV[COR_REST_MAX_LOOPS];
+static pthread_t      corHttpThreadV[COR_REST_MAX_LOOPS];
+static int            corHttpLoops   = 1;
 static bool           corHttpRunning = false;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestHttpLoopsSet - how many event loops to run (builtin server only)
+//
+// Called before corRestInit. Clamped rather than rejected: the caller's job is
+// to pass what the user asked for, not to know this file's limits.
+//
+void corRestHttpLoopsSet(int loops)
+{
+  if (loops < 1)
+    loops = 1;
+  else if (loops > COR_REST_MAX_LOOPS)
+    loops = COR_REST_MAX_LOOPS;
+
+  corHttpLoops = loops;
+}
 
 
 
@@ -358,9 +398,9 @@ void corRestBackendResume(CorRestState* stateP)
 //
 // serveThread -
 //
-static void* serveThread(void* unused)
+static void* serveThread(void* serverP)
 {
-  corHttpServe(&corHttpServer);
+  corHttpServe((CorHttpServer*) serverP);
   return NULL;
 }
 
@@ -395,13 +435,37 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
   if (connPoolSize < COR_HTTP_CONN_POOL_SIZE)
     connPoolSize = COR_HTTP_CONN_POOL_SIZE;
 
-  if (corHttpInit(&corHttpServer, port, connPoolSize, httpRequestCb) != CorHttpOk)
-  {
-    fprintf(stderr, "corRestInit: the built-in HTTP server failed to listen on port %d\n", port);
-    return -1;
-  }
+  //
+  // DIVIDED among the loops, never replicated.
+  //
+  // The pool is slots x 16 KiB of buffer, allocated at start-up so that no
+  // request ever mallocs its own machinery. Giving each of 8 loops a full 1024
+  // slots would reserve eight times the memory to serve the same number of
+  // concurrent connections, and take the idle resident set from ~18 MiB to
+  // something that would rewrite the footprint numbers. The total is the
+  // caller's statement about expected concurrency; how many loops it is spread
+  // over is this file's business.
+  //
+  int perLoop = connPoolSize / corHttpLoops;
 
-  corHttpServer.doneCb = httpRequestDone;
+  if (perLoop < 16)          // a loop with almost no slots is worse than fewer loops
+    perLoop = 16;
+
+  for (int ix = 0; ix < corHttpLoops; ix++)
+  {
+    if (corHttpInit(&corHttpServerV[ix], port, perLoop, httpRequestCb) != CorHttpOk)
+    {
+      fprintf(stderr, "corRestInit: the built-in HTTP server failed to listen on port %d\n", port);
+
+      // Undo the ones that did come up - a half-listening server is not a server.
+      for (int done = 0; done < ix; done++)
+        corHttpRelease(&corHttpServerV[done]);
+
+      return -1;
+    }
+
+    corHttpServerV[ix].doneCb = httpRequestDone;
+  }
 
   //
   // The same § 6.3.2 threshold the dispatch enforces, plus room for the headers
@@ -421,14 +485,31 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
 
     // maxRequestSize is an int over there; a --maxRequestSize of a few GiB would
     // otherwise wrap and cap every request at a negative number of bytes.
-    corHttpServer.maxRequestSize = (cap > 0x7fffffffULL) ? 0 : (int) cap;
+    for (int ix = 0; ix < corHttpLoops; ix++)
+      corHttpServerV[ix].maxRequestSize = (cap > 0x7fffffffULL) ? 0 : (int) cap;
   }
 
-  if (pthread_create(&corHttpThread, NULL, serveThread, NULL) != 0)
+  for (int ix = 0; ix < corHttpLoops; ix++)
   {
-    fprintf(stderr, "corRestInit: the built-in HTTP server's event loop failed to start\n");
-    corHttpRelease(&corHttpServer);
-    return -1;
+    if (pthread_create(&corHttpThreadV[ix], NULL, serveThread, &corHttpServerV[ix]) != 0)
+    {
+      fprintf(stderr, "corRestInit: the built-in HTTP server's event loop failed to start\n");
+
+      //
+      // Stop and join the loops already running before releasing anything -
+      // a thread still inside corHttpServe owns its server's fds.
+      //
+      for (int up = 0; up < ix; up++)
+        corHttpStop(&corHttpServerV[up]);
+
+      for (int up = 0; up < ix; up++)
+        pthread_join(corHttpThreadV[up], NULL);
+
+      for (int all = 0; all < corHttpLoops; all++)
+        corHttpRelease(&corHttpServerV[all]);
+
+      return -1;
+    }
   }
 
   corHttpRunning = true;
@@ -447,9 +528,19 @@ void corRestBackendStop(void)
   if (corHttpRunning == false)
     return;
 
-  corHttpStop(&corHttpServer);      // a flag; the loop notices within its 1 s timeout
-  pthread_join(corHttpThread, NULL);
-  corHttpRelease(&corHttpServer);
+  //
+  // Signal them ALL first, then join them all. Stopping and joining one at a
+  // time would serialise the 1 s timeouts - eight loops would take eight
+  // seconds to shut down.
+  //
+  for (int ix = 0; ix < corHttpLoops; ix++)
+    corHttpStop(&corHttpServerV[ix]);   // a flag; each loop notices within its 1 s timeout
+
+  for (int ix = 0; ix < corHttpLoops; ix++)
+    pthread_join(corHttpThreadV[ix], NULL);
+
+  for (int ix = 0; ix < corHttpLoops; ix++)
+    corHttpRelease(&corHttpServerV[ix]);
 
   corHttpRunning = false;
 }

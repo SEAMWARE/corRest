@@ -43,6 +43,25 @@
 extern int   corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* certPem);
 
 
+
+// -----------------------------------------------------------------------------
+//
+// corRestHttpLoopsSet - how many event loops share the listening port
+//
+// BUILTIN SERVER ONLY, and a no-op on the libmicrohttpd one, which has a thread
+// per connection and no loop to multiply. Call it before corRestInit; out-of-
+// range values are clamped rather than refused.
+//
+// One loop does all the socket I/O for every connection it owns - accept, read,
+// parse and write - with the workers running only the service routine in
+// between. That single thread is what leaves the machine half idle: 4.4 of 8
+// cores against libmicrohttpd's 7.9, at a lower cost per request. More loops,
+// each with its own listen socket on the same port (SO_REUSEPORT), its own
+// epoll and its own connection pool, is the way to use the rest.
+//
+extern void  corRestHttpLoopsSet(int loops);
+
+
 //
 // corRestBackendStop - stop serving; called after the worker pool has drained.
 //
