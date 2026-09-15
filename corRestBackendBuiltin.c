@@ -197,6 +197,17 @@ static void httpRequestCb(CorHttpConn* connP)
 
   corRestStateInit(connP, connP->path.s, connP->method.s);
 
+  //
+  // Which loop read this request - and therefore which work queue it belongs
+  // to, and which loop will write its answer. corRestStateInit has just zeroed
+  // the state, so a single-loop build needs nothing and gets shard 0 anyway.
+  //
+  // Pointer arithmetic into our own array, which is why this lives here and not
+  // in corRest proper: this file owns corHttpServerV, and corRest has no idea
+  // event loops exist.
+  //
+  stateP->shard = (int) (connP->serverP - corHttpServerV);
+
   // The verb string is corHttp's too - copied, like everything else below.
   corRest.in.verbString = kaStrdup(&corRest.kalloc, connP->method.s);
 
@@ -511,6 +522,12 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
       return -1;
     }
   }
+
+  //
+  // One work queue per loop. Before corRestWorkerPoolStart, which corRestInit
+  // calls after this function returns.
+  //
+  corRestWorkerShardsSet(corHttpLoops);
 
   corHttpRunning = true;
 

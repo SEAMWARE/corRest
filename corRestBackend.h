@@ -174,6 +174,22 @@ extern bool  corRestAsyncFinish(CorRestState* stateP);
 // corRestWorkerPoolStart / Stop - one worker per I/O thread
 //
 extern int   corRestWorkerPoolStart(int workers);
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestWorkerShardsSet - how many work queues the pool runs
+//
+// Call BEFORE corRestWorkerPoolStart - corRestInit already starts the backend
+// first, so the number of event loops is known by then. One queue per event
+// loop keeps a request on one loop's threads end to end; the default of 1 is
+// what libmicrohttpd wants and leaves that backend unchanged.
+//
+// Clamped down to the worker count: more queues than workers would leave one
+// with nobody serving it, and a request landing there would wait for ever.
+//
+extern void  corRestWorkerShardsSet(int shards);
 extern void  corRestWorkerPoolStop(void);
 
 
