@@ -135,11 +135,11 @@ TEST          = corRestTest
 TEST_SOURCES  = corRestTest.c
 TEST_OBJS     = $(addprefix $(OBJDIR)/,$(TEST_SOURCES:.c=.o))
 
-SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../klog -L../ktrace
-SO_LIBS       = -lkalloc -lkjson -lklog -lktrace -lkbase $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread
-SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../kjson:$$ORIGIN/../kbase:$$ORIGIN/../klog:$$ORIGIN/../ktrace'
+SO_LDFLAGS    = -L../kalloc -L../kjson -L../kbase -L../ktrace
+SO_LIBS       = -lkalloc -lkjson -lktrace -lkbase $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread
+SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../kjson:$$ORIGIN/../kbase:$$ORIGIN/../ktrace'
 
-LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../klog/libklog.a ../ktrace/libktrace.a ../kbase/libkbase.a $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread -lm
+LIBS          = ../kalloc/libkalloc.a ../kjson/libkjson.a ../ktrace/libktrace.a ../kbase/libkbase.a $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread -lm
 
 #
 # Built per flavour, then STAGED to the repo root where every consumer expects
