@@ -864,49 +864,104 @@ int corRestProcessInProcess(CorRestVerb       verb,
 // post-response hook once the response has gone out, so notification ordering
 // is unchanged.
 //
-static pthread_t*       corRestWorkerV    = NULL;
+//
+// The work queues - one per event loop, not one per process
+//
+// A single queue was one mutex and one condvar that EVERY request crossed
+// twice, enqueue and dequeue, with every worker parked on the same condvar.
+// With one event loop that cost little. With several it is the ceiling:
+// per-request CPU measured 30.7 us at one loop and 63.8 us at eight, on
+// identical work. The requests did not get more expensive, the contention did.
+//
+// So each loop gets a queue of its own and a slice of the workers. A request is
+// read by loop i, queued to shard i, run by one of shard i's workers, resumed
+// to loop i and written by loop i - never touching a lock another loop holds.
+//
+// The backend decides the count: the builtin server has one shard per event
+// loop, libmicrohttpd exactly one, which leaves that backend as it was.
+//
+// ⚠ The kernel hashes CONNECTIONS to loops, not requests. A deployment with a
+// handful of long-lived keep-alive clients can therefore leave a shard idle
+// while another queues, and a worker cannot steal from a neighbour. Work
+// stealing is the answer if that shows up in practice; it is strictly more
+// machinery, so it waits for evidence.
+//
+typedef struct CorRestWorkQueue
+{
+  pthread_mutex_t   mtx;
+  pthread_cond_t    cond;
+  CorRestState*     head;
+  CorRestState*     tail;
+} CorRestWorkQueue;
+
+#define COR_REST_MAX_SHARDS 64
+
+static CorRestWorkQueue corRestQueueV[COR_REST_MAX_SHARDS];
+static int              corRestShards      = 1;
+static pthread_t*       corRestWorkerV     = NULL;
+static int*             corRestWorkerShard = NULL;   // which queue each worker serves
 static int              corRestWorkerCount = 0;
-static CorRestState*     corRestQueueHead  = NULL;
-static CorRestState*     corRestQueueTail  = NULL;
-static pthread_mutex_t  corRestQueueMtx   = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t   corRestQueueCond  = PTHREAD_COND_INITIALIZER;
-static volatile bool    corRestWorkersRun = false;
+static volatile bool    corRestWorkersRun  = false;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestWorkerShardsSet - how many work queues to run
+//
+// Called by the backend BEFORE corRestWorkerPoolStart, which is the order
+// corRestInit already uses: the backend starts first, so by the time the pool
+// is built the number of loops is known. Clamped rather than refused.
+//
+void corRestWorkerShardsSet(int shards)
+{
+  if (shards < 1)
+    shards = 1;
+  else if (shards > COR_REST_MAX_SHARDS)
+    shards = COR_REST_MAX_SHARDS;
+
+  corRestShards = shards;
+}
+
+
 
 static void corRestWorkerEnqueue(CorRestState* conP)
 {
+  CorRestWorkQueue* qP = &corRestQueueV[(conP->shard >= 0 && conP->shard < corRestShards) ? conP->shard : 0];
+
   conP->asyncNext = NULL;
 
-  pthread_mutex_lock(&corRestQueueMtx);
-  if (corRestQueueTail != NULL)
-    corRestQueueTail->asyncNext = conP;
+  pthread_mutex_lock(&qP->mtx);
+  if (qP->tail != NULL)
+    qP->tail->asyncNext = conP;
   else
-    corRestQueueHead = conP;
-  corRestQueueTail = conP;
-  pthread_cond_signal(&corRestQueueCond);
-  pthread_mutex_unlock(&corRestQueueMtx);
+    qP->head = conP;
+  qP->tail = conP;
+  pthread_cond_signal(&qP->cond);
+  pthread_mutex_unlock(&qP->mtx);
 }
 
-static void* corRestWorkerMain(void* unused)
+static void* corRestWorkerMain(void* shardP)
 {
-  (void) unused;
+  CorRestWorkQueue* qP = &corRestQueueV[*(int*) shardP];
 
   while (true)
   {
-    pthread_mutex_lock(&corRestQueueMtx);
-    while (corRestQueueHead == NULL && corRestWorkersRun)
-      pthread_cond_wait(&corRestQueueCond, &corRestQueueMtx);
+    pthread_mutex_lock(&qP->mtx);
+    while (qP->head == NULL && corRestWorkersRun)
+      pthread_cond_wait(&qP->cond, &qP->mtx);
 
-    if (corRestQueueHead == NULL)   // woken with an empty queue => shutdown drain done
+    if (qP->head == NULL)           // woken with an empty queue => shutdown drain done
     {
-      pthread_mutex_unlock(&corRestQueueMtx);
+      pthread_mutex_unlock(&qP->mtx);
       break;
     }
 
-    CorRestState* conP = corRestQueueHead;
-    corRestQueueHead = conP->asyncNext;
-    if (corRestQueueHead == NULL)
-      corRestQueueTail = NULL;
-    pthread_mutex_unlock(&corRestQueueMtx);
+    CorRestState* conP = qP->head;
+    qP->head = conP->asyncNext;
+    if (qP->head == NULL)
+      qP->tail = NULL;
+    pthread_mutex_unlock(&qP->mtx);
 
     corRestP = conP;
 
@@ -948,15 +1003,51 @@ int corRestWorkerPoolStart(int workers)
   if (workers < 1)
     workers = 1;
 
-  corRestWorkerV = (pthread_t*) calloc(workers, sizeof(pthread_t));
-  if (corRestWorkerV == NULL)
+  //
+  // More shards than workers would leave a queue with nobody serving it, and a
+  // request landing there would wait for ever. One worker per shard is the
+  // floor, so the shard count bends to the worker count rather than the other
+  // way round.
+  //
+  if (corRestShards > workers)
+    corRestShards = workers;
+
+  for (int ix = 0; ix < corRestShards; ix++)
+  {
+    pthread_mutex_init(&corRestQueueV[ix].mtx, NULL);
+    pthread_cond_init(&corRestQueueV[ix].cond, NULL);
+    corRestQueueV[ix].head = NULL;
+    corRestQueueV[ix].tail = NULL;
+  }
+
+  corRestWorkerV     = (pthread_t*) calloc(workers, sizeof(pthread_t));
+  corRestWorkerShard = (int*)       calloc(workers, sizeof(int));
+
+  if ((corRestWorkerV == NULL) || (corRestWorkerShard == NULL))
+  {
+    free(corRestWorkerV);      // free(NULL) is a no-op; either may be the one that failed
+    free(corRestWorkerShard);
+    corRestWorkerV     = NULL;
+    corRestWorkerShard = NULL;
     return -1;
+  }
 
   corRestWorkersRun = true;
 
+  //
+  // Round-robin rather than contiguous blocks: with workers not a multiple of
+  // shards, round-robin leaves the remainder spread one-per-shard instead of
+  // piling it all on the last one.
+  //
+  // The shard index is passed BY ADDRESS and must therefore outlive the call -
+  // hence the array rather than a stack variable or a cast-through-pointer,
+  // which would hand every thread the same or an invalid one.
+  //
   for (int i = 0; i < workers; i++)
   {
-    if (pthread_create(&corRestWorkerV[i], NULL, corRestWorkerMain, NULL) != 0)
+    corRestWorkerShard[i] = i % corRestShards;
+
+    if (pthread_create(&corRestWorkerV[i], NULL, corRestWorkerMain, &corRestWorkerShard[i]) != 0)
     {
       corRestWorkerCount = i;    // join only the threads that started
       return -1;
@@ -984,17 +1075,33 @@ void corRestWorkerPoolStop(void)
   if (corRestWorkerV == NULL)
     return;
 
-  pthread_mutex_lock(&corRestQueueMtx);
-  corRestWorkersRun = false;
-  pthread_cond_broadcast(&corRestQueueCond);
-  pthread_mutex_unlock(&corRestQueueMtx);
+  //
+  // Clear the flag under EVERY shard's lock and wake everyone. A worker parked
+  // on its own condvar is woken only by its own shard, so a broadcast on one of
+  // them would leave the others asleep for ever and the join below would hang.
+  //
+  for (int ix = 0; ix < corRestShards; ix++)
+  {
+    pthread_mutex_lock(&corRestQueueV[ix].mtx);
+    corRestWorkersRun = false;
+    pthread_cond_broadcast(&corRestQueueV[ix].cond);
+    pthread_mutex_unlock(&corRestQueueV[ix].mtx);
+  }
 
   for (int i = 0; i < corRestWorkerCount; i++)
     pthread_join(corRestWorkerV[i], NULL);
 
   free(corRestWorkerV);
+  free(corRestWorkerShard);
   corRestWorkerV     = NULL;
+  corRestWorkerShard = NULL;
   corRestWorkerCount = 0;
+
+  for (int ix = 0; ix < corRestShards; ix++)
+  {
+    pthread_mutex_destroy(&corRestQueueV[ix].mtx);
+    pthread_cond_destroy(&corRestQueueV[ix].cond);
+  }
 }
 
 

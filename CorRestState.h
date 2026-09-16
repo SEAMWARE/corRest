@@ -87,6 +87,21 @@ typedef struct CorRestState
   //
   bool                    asyncFinishing;
   struct CorRestState*     asyncNext;
+
+  //
+  // shard - which work queue this request belongs to
+  //
+  // Set by the BACKEND, because only the backend knows how many event loops
+  // there are and which one read this request. The builtin server derives it
+  // from the connection's loop; libmicrohttpd sets 0 and has exactly one shard,
+  // so nothing about that backend changes.
+  //
+  // It exists so a request stays on ONE loop's threads end to end - read by
+  // loop i, queued to shard i, run by one of shard i's workers, resumed to
+  // loop i, written by loop i - and never crosses a mutex another loop is
+  // using.
+  //
+  int                      shard;
 } CorRestState;
 
 
