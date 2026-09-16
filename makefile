@@ -76,7 +76,7 @@ else
   $(error COR_HTTP_SERVER must be 'mhd' or 'builtin', not '$(COR_HTTP_SERVER)')
 endif
 
-CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -Wno-unused-function -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
+CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
