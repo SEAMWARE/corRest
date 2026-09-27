@@ -24,9 +24,10 @@
 
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientRequest, CorRestClientResponse
 #include "kalloc/kaAlloc.h"                      // kaAlloc
-#include "kjson/KjNode.h"                        // KjNode
-#include "kjson/kjRender.h"                      // kjFastRender
-#include "kjson/kjRenderSize.h"                  // kjFastRenderSize
+#include "kalloc/KAlloc.h"                         // KAlloc
+#include "corTree/CorNode.h"                     // CorNode
+#include "corJson/corJsonRender.h"               // corJsonFastRender
+#include "corJson/corJsonRenderSize.h"           // corJsonFastRenderSize
 
 
 
@@ -516,14 +517,14 @@ static int corRestClientSendOnce(CorRestClientRequest* req, CorRestClientRespons
 
   if (req->bodyJson != NULL)
   {
-    int size = kjFastRenderSize(req->bodyJson);
+    int size = corJsonFastRenderSize(req->bodyJson);
     renderedBody = (char*)malloc(size + 1);
     if (renderedBody == NULL)
     {
       setError(resp, CORR_ERR_ALLOC, "Failed to allocate JSON render buffer");
       return CORR_ERR_ALLOC;
     }
-    kjFastRender(req->bodyJson, renderedBody);
+    corJsonFastRender(req->bodyJson, renderedBody);
     renderedBodyLen = (int)strlen(renderedBody);
 
     bool hasContentType = false;

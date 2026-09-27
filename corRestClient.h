@@ -17,7 +17,7 @@
 #include <pthread.h>
 
 #include "kalloc/KAlloc.h"
-#include "kjson/KjNode.h"
+#include "corTree/CorNode.h"
 
 #include "corRest/CorRestVerb.h"
 #include "corRest/CorRestKeyValue.h"
@@ -116,7 +116,7 @@ typedef struct CorRestClientRequest
   // Body
   char*             body;
   int               bodyLen;
-  KjNode*           bodyJson;
+  CorNode*          bodyJson;
 
   // Config
   int               connectTimeoutMs;
@@ -145,7 +145,7 @@ typedef struct CorRestClientResponse
 
   char*             body;
   int               bodyLen;
-  KjNode*           bodyJson;
+  CorNode*          bodyJson;
 
   int               error;
   char              errorDetail[256];

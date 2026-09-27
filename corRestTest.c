@@ -15,8 +15,8 @@
 #include <unistd.h>
 
 #include "kalloc/kaAlloc.h"
-#include "kjson/kjBuilder.h"
-#include "kjson/KjNode.h"
+#include "corTree/corTreeBuilder.h"
+#include "corTree/CorNode.h"
 
 #include "corRest/corRest.h"
 
@@ -52,8 +52,8 @@ static CorRestParam paramV[] =
 //
 static bool getPing(void)
 {
-  corRest.out.responseTree = kjObject(corRest.kjsonP, NULL);
-  kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "ping", "pong"));
+  corRest.out.responseTree = corTreeObject(corRest.kallocP, NULL);
+  corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "ping", "pong"));
 
   return true;
 }
@@ -68,12 +68,12 @@ static bool getEntity(void)
 {
   char* entityId = corRest.in.wildcard[0] ? corRest.in.wildcard[0] : "?";
 
-  corRest.out.responseTree = kjObject(corRest.kjsonP, NULL);
-  kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "id", entityId));
+  corRest.out.responseTree = corTreeObject(corRest.kallocP, NULL);
+  corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "id", entityId));
 
   // Show URI params that were passed
   for (int i = 0; i < corRest.in.uriParamCount; i++)
-    kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, corRest.in.uriParamV[i].key, corRest.in.uriParamV[i].value));
+    corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, corRest.in.uriParamV[i].key, corRest.in.uriParamV[i].value));
 
   return true;
 }
@@ -89,9 +89,9 @@ static bool getEntityAttr(void)
   char* entityId = corRest.in.wildcard[0] ? corRest.in.wildcard[0] : "?";
   char* attrName = corRest.in.wildcard[1] ? corRest.in.wildcard[1] : "?";
 
-  corRest.out.responseTree = kjObject(corRest.kjsonP, NULL);
-  kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "entity", entityId));
-  kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "attr", attrName));
+  corRest.out.responseTree = corTreeObject(corRest.kallocP, NULL);
+  corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "entity", entityId));
+  corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "attr", attrName));
 
   return true;
 }
@@ -105,14 +105,14 @@ static bool getEntityAttr(void)
 static bool postEntity(void)
 {
   corRest.out.httpStatusCode = 201;
-  corRest.out.responseTree   = kjObject(corRest.kjsonP, NULL);
+  corRest.out.responseTree   = corTreeObject(corRest.kallocP, NULL);
 
-  kjChildAdd(corRest.out.responseTree, kjBoolean(corRest.kjsonP, "created", KTRUE));
-  kjChildAdd(corRest.out.responseTree, kjInteger(corRest.kjsonP, "payloadSize", corRest.in.payloadSize));
+  corTreeChildAdd(corRest.out.responseTree, corTreeBoolean(corRest.kallocP, "created", true));
+  corTreeChildAdd(corRest.out.responseTree, corTreeInteger(corRest.kallocP, "payloadSize", corRest.in.payloadSize));
 
   // Echo back parsed request tree if present
   if (corRest.in.requestTree != NULL)
-    kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "payloadType", kjValueType(corRest.in.requestTree->type)));
+    corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "payloadType", corTreeValueType(corRest.in.requestTree->type)));
 
   // Add a custom response header
   corRest.out.headerV[corRest.out.headerCount].key   = "Location";
@@ -132,8 +132,8 @@ static bool getCatchAll(void)
 {
   char* path = corRest.in.wildcard[0] ? corRest.in.wildcard[0] : "?";
 
-  corRest.out.responseTree = kjObject(corRest.kjsonP, NULL);
-  kjChildAdd(corRest.out.responseTree, kjString(corRest.kjsonP, "caught", path));
+  corRest.out.responseTree = corTreeObject(corRest.kallocP, NULL);
+  corTreeChildAdd(corRest.out.responseTree, corTreeString(corRest.kallocP, "caught", path));
 
   return true;
 }
