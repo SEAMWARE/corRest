@@ -150,8 +150,7 @@ Sibling k-lib repos (one `.a` each):
 - [`corTree`](https://github.com/SEAMWARE/corTree) — the tree (`CorNode`)
 - [`corJson`](https://github.com/SEAMWARE/corJson) — JSON parsing and rendering
 - [`kbase`](https://gitlab.com/kzangeli/kbase) — core utilities
-- [`klog`](https://gitlab.com/kzangeli/klog) — logging
-- [`ktrace`](https://gitlab.com/kzangeli/ktrace) — trace levels
+- [`corLog`](https://github.com/SEAMWARE/corLog) — logging and trace levels
 
 System libraries: `libmicrohttpd` (HTTP server), `openssl` (`ssl`/`crypto`, TLS
 client), `pthread`, `m`.

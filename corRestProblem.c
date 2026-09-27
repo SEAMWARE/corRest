@@ -9,7 +9,7 @@
 #include <stdarg.h>                     // va_list, va_start, va_end
 #include <stdio.h>                      // vsnprintf
 
-#include "ktrace/ktOut.h"               // ktOut
+#include "corLog/corLogOut.h"           // corLogOut
 #include "corRest/CorRestState.h"         // corRest
 #include "corRest/corRestProblem.h"       // Own interface
 
@@ -46,8 +46,8 @@ void corRestProblemFunction
   // macro forwards __FILE__/__LINE__/__FUNCTION__, handed straight to the trace
   // so it points at the detection site, not corRestProblem.c.
   //
-  // ktOut() rather than KT_E(): KT_E captures __FILE__ and __LINE__ at ITS OWN
+  // corLogOut() rather than COR_E(): COR_E captures __FILE__ and __LINE__ at ITS OWN
   // call site, which would point every problem the library reports at this line.
   //
-  ktOut(fileName, lineNo, functionName, 'E', -1, "%d %s: %s", statusCode, title, corRest.out.problemDetail);
+  corLogOut(fileName, lineNo, functionName, 'E', -1, "%d %s: %s", statusCode, title, corRest.out.problemDetail);
 }

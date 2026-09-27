@@ -21,7 +21,7 @@
 
 #include <microhttpd.h>
 
-#include "ktrace/kTrace.h"                // KT_V
+#include "corLog/corLog.h"                // COR_V
 
 #include "corRest/CorRestVerb.h"          // CorVerbPost, ...
 #include "corRest/CorRestState.h"         // CorRestState, corRest
@@ -116,7 +116,7 @@ static enum MHD_Result mhdConnectionHandler
   // --- First call: allocate this connection's per-request state ---
   if (*con_cls == NULL)
   {
-    KT_V("Request: %s %s", method, url);  // one line per request (verbose mode, -v)
+    COR_V("Request: %s %s", method, url); // one line per request (verbose mode, -v)
 
     // Each connection owns its CorRestState (hung on con_cls), so when the
     // epoll pool thread interleaves connection B's callbacks between

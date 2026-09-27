@@ -19,7 +19,7 @@
 #include "corJson/corJsonRender.h"      // corJsonFastRender
 #include "corJson/corJsonRenderSize.h"  // corJsonFastRenderSize
 #include "corTree/corTreeBuilder.h"     // corTreeObject, corTreeString, corTreeChildAdd
-#include "ktrace/kTrace.h"              // KT_V
+#include "corLog/corLog.h"              // COR_V
 
 #include "corRest/CorRestVerb.h"          // CorVerbs, corRestVerbToString
 #include "corRest/CorRestService.h"       // CorRestService, CorRestServiceVector
