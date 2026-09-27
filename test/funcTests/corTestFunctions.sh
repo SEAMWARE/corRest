@@ -4,5 +4,5 @@
 #
 export COR_BROKER=/home/kz/git/corRest/corRestTest
 
-# Override coraineStart: corRestTest uses --port (double dash via parseArgs, not kargs)
+# Override coraineStart: corRestTest uses --port (double dash via parseArgs, not corArgs)
 # Actually corRestTest uses -port (single dash), so the default coraineStart works.

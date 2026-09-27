@@ -16,7 +16,7 @@
 #include <stdbool.h>                             // bool, true, false
 
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientResponse
-#include "kalloc/KAlloc.h"                       // KAlloc
+#include "corAlloc/CorAlloc.h"                   // CorAlloc
 
 
 
@@ -394,7 +394,7 @@ static int dechunk(char* buf, int len, int* outLen)
 //
 // corRestClientParseResponse - Parse HTTP response from conn->buf (destructive)
 //
-int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, KAlloc* allocP)
+int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, CorAlloc* allocP)
 {
   (void) allocP;
 

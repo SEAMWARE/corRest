@@ -9,7 +9,7 @@
 #include <stdbool.h>                                     // bool
 #include <string.h>                                      // memcpy
 
-#include "kalloc/kaAlloc.h"                              // kaAlloc
+#include "corAlloc/corAlloc.h"                           // corAlloc
 
 #include "corRest/CorRestIn.h"                             // COR_REST_KV_GROW_SIZE
 #include "corRest/CorRestState.h"                          // corRest
@@ -29,7 +29,7 @@ bool corRestOutHeaderAdd(const char* key, const char* value)
   if (corRest.out.headerCount >= corRest.out.headerSize)
   {
     int             newSize = corRest.out.headerSize + COR_REST_KV_GROW_SIZE;
-    CorRestKeyValue* newV    = (CorRestKeyValue*) kaAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
+    CorRestKeyValue* newV    = (CorRestKeyValue*) corAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
 
     if (newV == NULL)
       return false;

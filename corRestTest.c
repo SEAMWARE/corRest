@@ -14,7 +14,7 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include "kalloc/kaAlloc.h"
+#include "corAlloc/corAlloc.h"
 #include "corTree/corTreeBuilder.h"
 #include "corTree/CorNode.h"
 

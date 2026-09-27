@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stddef.h>                       // NULL - came in via microhttpd.h until this header stopped including it
 
-#include "kalloc/KAlloc.h"
+#include "corAlloc/CorAlloc.h"
 #include "corJson/CorJson.h"
 
 #include "corRest/CorRestService.h"
@@ -41,7 +41,7 @@ typedef struct CorRestState
   void*                   connection;
 
   // Allocator: pool-based, bulk-free after request completes
-  KAlloc                  kalloc;
+  CorAlloc                kalloc;
   char                    kallocBuffer[8 * 1024];   // initial inline buffer
 
   //
@@ -52,7 +52,7 @@ typedef struct CorRestState
   // wherever corJsonP is, and a thread that never initialised its state keeps
   // both NULL, as before.
   //
-  KAlloc*                 kallocP;
+  CorAlloc*               kallocP;
 
   // JSON parser
   CorJson                 corJson;

@@ -9,8 +9,8 @@
 #include <stdlib.h>                         // free, atoi
 #include <string.h>                         // memset, strdup, strchr, strlen
 
-#include "kalloc/kaBufferInit.h"            // kaBufferInit
-#include "kalloc/kaBufferReset.h"           // kaBufferReset
+#include "corAlloc/corAllocBufferInit.h"    // corAllocBufferInit
+#include "corAlloc/corAllocBufferReset.h"   // corAllocBufferReset
 #include "corJson/corJsonCreate.h"          // corJsonCreate
 
 #include "corRest/CorRestState.h"             // CorRestState, corRest
@@ -50,9 +50,9 @@ void corRestStateInit(void* connection, const char* url, const char* method)
 
   // Initialize kalloc pool (inline buffer first, then malloc-based overflow).
   // 256KB grow chunks: keeps single-shot renderings of ~1000-entity responses
-  // inside one block. kaAlloc silently returns NULL for any single request
+  // inside one block. corAlloc silently returns NULL for any single request
   // >= chunk size, so this also caps the max single allocation.
-  kaBufferInit(&corRest.kalloc, corRest.kallocBuffer, sizeof(corRest.kallocBuffer), 256 * 1024, NULL, "corRest");
+  corAllocBufferInit(&corRest.kalloc, corRest.kallocBuffer, sizeof(corRest.kallocBuffer), 256 * 1024, NULL, "corRest");
 
   // The parser, and the allocator every tree of this request is built in
   corRest.corJsonP = corJsonCreate(&corRest.corJson, &corRest.kalloc);
@@ -143,5 +143,5 @@ void corRestStateRelease(void)
   }
 
   // Bulk-free all kalloc allocations
-  kaBufferReset(&corRest.kalloc, KFALSE);
+  corAllocBufferReset(&corRest.kalloc, false);
 }

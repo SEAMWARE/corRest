@@ -79,7 +79,7 @@ thread-local per-request state.
 int  corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
 
 // Request builder
-void corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, KAlloc* allocP);
+void corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, CorAlloc* allocP);
 void corRestClientRequestHeader(CorRestClientRequest* req, const char* name, const char* value);
 void corRestClientRequestBody(CorRestClientRequest* req, const char* body, int bodyLen);
 void corRestClientRequestTimeout(CorRestClientRequest* req, int connectMs, int requestMs);
@@ -146,7 +146,7 @@ present (the build references `../<lib>/lib<lib>.a`).
 
 Sibling k-lib repos (one `.a` each):
 
-- [`kalloc`](https://gitlab.com/kzangeli/kalloc) — arena allocator (`KAlloc`)
+- [`corAlloc`](https://github.com/SEAMWARE/corAlloc) — arena allocator (`CorAlloc`)
 - [`corTree`](https://github.com/SEAMWARE/corTree) — the tree (`CorNode`)
 - [`corJson`](https://github.com/SEAMWARE/corJson) — JSON parsing and rendering
 - [`kbase`](https://gitlab.com/kzangeli/kbase) — core utilities

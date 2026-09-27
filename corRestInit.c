@@ -12,9 +12,9 @@
 #include <time.h>                       // clock_gettime, CLOCK_MONOTONIC
 #include <pthread.h>                    // pthread_* (async worker pool)
 
-#include "kalloc/kaAlloc.h"             // kaAlloc
-#include "kalloc/kaStrdup.h"            // kaStrdup
-#include "kalloc/KAlloc.h"              // KAlloc
+#include "corAlloc/corAlloc.h"          // corAlloc
+#include "corAlloc/corAllocStrdup.h"    // corAllocStrdup
+#include "corAlloc/CorAlloc.h"          // CorAlloc
 #include "corJson/corJsonParse.h"       // corJsonParse
 #include "corJson/corJsonRender.h"      // corJsonFastRender
 #include "corJson/corJsonRenderSize.h"  // corJsonFastRenderSize
@@ -221,7 +221,7 @@ void corRestUriParamAdd(char* name, char* value)
   if (corRest.in.uriParamCount >= corRest.in.uriParamSize)
   {
     int newSize = corRest.in.uriParamSize + COR_REST_KV_GROW_SIZE;
-    CorRestKeyValue* newV = (CorRestKeyValue*) kaAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
+    CorRestKeyValue* newV = (CorRestKeyValue*) corAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
 
     if (newV == NULL)
       return;
@@ -311,7 +311,7 @@ void corRestHttpHeaderAdd(const char* key, const char* value)
   if (corRest.in.httpHeaderCount >= corRest.in.httpHeaderSize)
   {
     int newSize = corRest.in.httpHeaderSize + COR_REST_KV_GROW_SIZE;
-    CorRestKeyValue* newV = (CorRestKeyValue*) kaAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
+    CorRestKeyValue* newV = (CorRestKeyValue*) corAlloc(&corRest.kalloc, newSize * sizeof(CorRestKeyValue));
 
     if (newV == NULL)
       return;
@@ -476,7 +476,7 @@ void corRestProcessRequest(void)
     // a matching wildcard route NUL-terminates urlPath in place to delimit
     // its wildcard value. Capture the full path first so the 404/405 detail
     // reports the resource the client actually requested, not a truncation.
-    const char* reqPath = (corRest.in.urlPath != NULL) ? kaStrdup(&corRest.kalloc, corRest.in.urlPath) : "?";
+    const char* reqPath = (corRest.in.urlPath != NULL) ? corAllocStrdup(&corRest.kalloc, corRest.in.urlPath) : "?";
 
     char allow[128];
     int  pos = 0;
@@ -497,7 +497,7 @@ void corRestProcessRequest(void)
     if (pos > 0)
     {
       corRest.out.headerV[corRest.out.headerCount].key   = "Allow";
-      corRest.out.headerV[corRest.out.headerCount].value = kaStrdup(&corRest.kalloc, allow);
+      corRest.out.headerV[corRest.out.headerCount].value = corAllocStrdup(&corRest.kalloc, allow);
       corRest.out.headerCount++;
       corRestProblem(405, COR_REST_ERROR_METHOD, "Method Not Allowed",
                     "%s %s — supported methods: %s",
@@ -652,7 +652,7 @@ void corRestProcessRequest(void)
     {
       corRest.corJsonP->spacesPerIndent = corRest.in.prettySpaces;
       responseBodySize = corJsonRenderSize(corRest.corJsonP, corRest.out.responseTree) + 1;
-      responseBody     = kaAlloc(&corRest.kalloc, responseBodySize);
+      responseBody     = corAlloc(&corRest.kalloc, responseBodySize);
       if (responseBody == NULL)
       {
         fprintf(stderr, "corRest: response body alloc failed (need %d bytes) — arena chunk too small?\n", responseBodySize);
@@ -668,7 +668,7 @@ void corRestProcessRequest(void)
     else
     {
       responseBodySize = corJsonFastRenderSize(corRest.out.responseTree) + 1;
-      responseBody     = kaAlloc(&corRest.kalloc, responseBodySize);
+      responseBody     = corAlloc(&corRest.kalloc, responseBodySize);
       if (responseBody == NULL)
       {
         fprintf(stderr, "corRest: response body alloc failed (need %d bytes) — arena chunk too small?\n", responseBodySize);
@@ -736,7 +736,7 @@ int corRestProcessInProcess(CorRestVerb       verb,
                            int              headerCount,
                            const char*      body,
                            int              bodyLen,
-                           KAlloc*          respAllocP,
+                           CorAlloc*        respAllocP,
                            char**           respBodyP,
                            int*             respBodyLenP,
                            CorRestKeyValue** respHeaderVP,
@@ -784,7 +784,7 @@ int corRestProcessInProcess(CorRestVerb       verb,
   // Body — copy into the inner arena (freed by corRestStateRelease)
   if (body != NULL && bodyLen > 0)
   {
-    corRest.in.payload = (char*) kaAlloc(&corRest.kalloc, bodyLen + 1);
+    corRest.in.payload = (char*) corAlloc(&corRest.kalloc, bodyLen + 1);
     if (corRest.in.payload != NULL)
     {
       memcpy(corRest.in.payload, body, bodyLen);
@@ -801,7 +801,7 @@ int corRestProcessInProcess(CorRestVerb       verb,
   // inner arena (where they currently live) is released.
   if (respBodyP != NULL && corRest.out.payload != NULL && corRest.out.payloadSize > 0)
   {
-    char* b = (char*) kaAlloc(respAllocP, corRest.out.payloadSize + 1);
+    char* b = (char*) corAlloc(respAllocP, corRest.out.payloadSize + 1);
     if (b != NULL)
     {
       memcpy(b, corRest.out.payload, corRest.out.payloadSize);
@@ -814,13 +814,13 @@ int corRestProcessInProcess(CorRestVerb       verb,
   if (respHeaderVP != NULL && corRest.out.headerCount > 0)
   {
     int n = corRest.out.headerCount;
-    CorRestKeyValue* hv = (CorRestKeyValue*) kaAlloc(respAllocP, n * sizeof(CorRestKeyValue));
+    CorRestKeyValue* hv = (CorRestKeyValue*) corAlloc(respAllocP, n * sizeof(CorRestKeyValue));
     if (hv != NULL)
     {
       for (int i = 0; i < n; i++)
       {
-        hv[i].key   = kaStrdup(respAllocP, corRest.out.headerV[i].key);
-        hv[i].value = kaStrdup(respAllocP, corRest.out.headerV[i].value);
+        hv[i].key   = corAllocStrdup(respAllocP, corRest.out.headerV[i].key);
+        hv[i].value = corAllocStrdup(respAllocP, corRest.out.headerV[i].value);
       }
       *respHeaderVP = hv;
       if (respHeaderCountP != NULL) *respHeaderCountP = n;
@@ -1274,7 +1274,7 @@ int corRestResponseHeaderVBuild(CorRestKeyValue* hv, int max)
         // backend sends these AFTER this function has returned, and one of them
         // does not copy what it is given.
         //
-        char* maxAgeBuf = (char*) kaAlloc(&corRest.kalloc, 16);
+        char* maxAgeBuf = (char*) corAlloc(&corRest.kalloc, 16);
 
         if (maxAgeBuf != NULL)
         {
@@ -1336,7 +1336,7 @@ static bool optionsHandler(void)
 
   corRest.out.httpStatusCode = 204;
   corRest.out.headerV[corRest.out.headerCount].key   = "Allow";
-  corRest.out.headerV[corRest.out.headerCount].value  = kaStrdup(&corRest.kalloc, allow);
+  corRest.out.headerV[corRest.out.headerCount].value  = corAllocStrdup(&corRest.kalloc, allow);
   corRest.out.headerCount++;
 
   return true;

@@ -61,8 +61,8 @@
 #include <pthread.h>                      // pthread_create
 #include <time.h>                         // clock_gettime
 
-#include "kalloc/kaAlloc.h"               // kaAlloc
-#include "kalloc/kaStrdup.h"              // kaStrdup
+#include "corAlloc/corAlloc.h"            // corAlloc
+#include "corAlloc/corAllocStrdup.h"      // corAllocStrdup
 #include "corLog/corLog.h"                // COR_V
 
 #include "corHttp/CorHttp.h"              // CorHttpServer, CorHttpConn
@@ -209,7 +209,7 @@ static void httpRequestCb(CorHttpConn* connP)
   stateP->shard = (int) (connP->serverP - corHttpServerV);
 
   // The verb string is corHttp's too - copied, like everything else below.
-  corRest.in.verbString = kaStrdup(&corRest.kalloc, connP->method.s);
+  corRest.in.verbString = corAllocStrdup(&corRest.kalloc, connP->method.s);
 
   //
   // The path arrived percent-ENCODED (MHD would have decoded it before we ever
@@ -243,8 +243,8 @@ static void httpRequestCb(CorHttpConn* connP)
   //
   for (int ix = 0; ix < connP->headers; ix++)
   {
-    char* key   = kaStrdup(&corRest.kalloc, connP->header[ix].key.s);
-    char* value = kaStrdup(&corRest.kalloc, connP->header[ix].value.s);
+    char* key   = corAllocStrdup(&corRest.kalloc, connP->header[ix].key.s);
+    char* value = corAllocStrdup(&corRest.kalloc, connP->header[ix].value.s);
 
     if ((key != NULL) && (value != NULL))
       corRestHttpHeaderAdd(key, value);
@@ -262,7 +262,7 @@ static void httpRequestCb(CorHttpConn* connP)
   //
   if (connP->query.len > 0)
   {
-    char* query = (char*) kaAlloc(&corRest.kalloc, connP->query.len + 1);
+    char* query = (char*) corAlloc(&corRest.kalloc, connP->query.len + 1);
 
     if (query != NULL)
     {
@@ -298,7 +298,7 @@ static void httpRequestCb(CorHttpConn* connP)
   if ((connP->body.s != NULL) && (connP->body.len > 0) &&
       (corRest.in.contentLengthMissing == false) && (corRest.out.httpStatusCode != 413))
   {
-    char* body = (char*) kaAlloc(&corRest.kalloc, connP->body.len + 1);
+    char* body = (char*) corAlloc(&corRest.kalloc, connP->body.len + 1);
 
     if (body != NULL)
     {
