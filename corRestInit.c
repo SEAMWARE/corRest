@@ -14,10 +14,11 @@
 
 #include "kalloc/kaAlloc.h"             // kaAlloc
 #include "kalloc/kaStrdup.h"            // kaStrdup
-#include "kjson/kjParse.h"              // kjParse
-#include "kjson/kjRender.h"             // kjFastRender
-#include "kjson/kjRenderSize.h"         // kjFastRenderSize
-#include "kjson/kjBuilder.h"            // kjObject, kjString, kjChildAdd
+#include "kalloc/KAlloc.h"              // KAlloc
+#include "corJson/corJsonParse.h"       // corJsonParse
+#include "corJson/corJsonRender.h"      // corJsonFastRender
+#include "corJson/corJsonRenderSize.h"  // corJsonFastRenderSize
+#include "corTree/corTreeBuilder.h"     // corTreeObject, corTreeString, corTreeChildAdd
 #include "ktrace/kTrace.h"              // KT_V
 
 #include "corRest/CorRestVerb.h"          // CorVerbs, corRestVerbToString
@@ -429,7 +430,7 @@ void corRestProcessRequest(void)
   // Parse incoming JSON payload (if any)
   if (corRest.in.payloadSize > 0)
   {
-    corRest.in.requestTree = kjParse(corRest.kjsonP, corRest.in.payload);
+    corRest.in.requestTree = corJsonParse(corRest.corJsonP, corRest.in.payload);
 
     if (corRest.in.requestTree != NULL)
       corRestPayloadParseHook();
@@ -622,20 +623,20 @@ void corRestProcessRequest(void)
   // accessor) rely on it.
   if (corRest.out.problemType != NULL && corRest.out.responseTree == NULL)
   {
-    corRest.out.responseTree = kjObject(corRest.kjsonP, NULL);
-    kjChildAdd(corRest.out.responseTree, kjString (corRest.kjsonP, "type",   corRest.out.problemType));
-    kjChildAdd(corRest.out.responseTree, kjString (corRest.kjsonP, "title",  corRest.out.problemTitle));
-    kjChildAdd(corRest.out.responseTree, kjInteger(corRest.kjsonP, "status", corRest.out.httpStatusCode));
-    kjChildAdd(corRest.out.responseTree, kjString (corRest.kjsonP, "detail", corRest.out.problemDetail));
+    corRest.out.responseTree = corTreeObject(corRest.kallocP, NULL);
+    corTreeChildAdd(corRest.out.responseTree, corTreeString (corRest.kallocP, "type", corRest.out.problemType));
+    corTreeChildAdd(corRest.out.responseTree, corTreeString (corRest.kallocP, "title", corRest.out.problemTitle));
+    corTreeChildAdd(corRest.out.responseTree, corTreeInteger(corRest.kallocP, "status", corRest.out.httpStatusCode));
+    corTreeChildAdd(corRest.out.responseTree, corTreeString (corRest.kallocP, "detail", corRest.out.problemDetail));
 
     // RFC 9457 §3.2 extension members (e.g. registrationId of a failed forward).
     if (corRest.out.problemExtras != NULL)
     {
-      KjNode* m = corRest.out.problemExtras->value.firstChildP;
+      CorNode* m = corRest.out.problemExtras->value.firstChildP;
       while (m != NULL)
       {
-        KjNode* next = m->next;
-        kjChildAdd(corRest.out.responseTree, m);   // splice across (re-parents m, clears m->next)
+        CorNode* next = m->next;
+        corTreeChildAdd(corRest.out.responseTree, m); // splice across (re-parents m, clears m->next)
         m = next;
       }
     }
@@ -649,8 +650,8 @@ void corRestProcessRequest(void)
   {
     if (corRest.in.prettySpaces > 0)
     {
-      corRest.kjsonP->spacesPerIndent = corRest.in.prettySpaces;
-      responseBodySize = kjRenderSize(corRest.kjsonP, corRest.out.responseTree) + 1;
+      corRest.corJsonP->spacesPerIndent = corRest.in.prettySpaces;
+      responseBodySize = corJsonRenderSize(corRest.corJsonP, corRest.out.responseTree) + 1;
       responseBody     = kaAlloc(&corRest.kalloc, responseBodySize);
       if (responseBody == NULL)
       {
@@ -661,12 +662,12 @@ void corRestProcessRequest(void)
       }
       else
       {
-        kjRender(corRest.kjsonP, corRest.out.responseTree, responseBody);
+        corJsonRender(corRest.corJsonP, corRest.out.responseTree, responseBody);
       }
     }
     else
     {
-      responseBodySize = kjFastRenderSize(corRest.out.responseTree) + 1;
+      responseBodySize = corJsonFastRenderSize(corRest.out.responseTree) + 1;
       responseBody     = kaAlloc(&corRest.kalloc, responseBodySize);
       if (responseBody == NULL)
       {
@@ -677,7 +678,7 @@ void corRestProcessRequest(void)
       }
       else
       {
-        kjFastRender(corRest.out.responseTree, responseBody);
+        corJsonFastRender(corRest.out.responseTree, responseBody);
       }
     }
     if (responseBody != NULL && responseBody[0] != 0)
@@ -857,7 +858,7 @@ int corRestProcessInProcess(CorRestVerb       verb,
 // epoll I/O throughput: a slow request no longer blocks the I/O thread from
 // servicing every other connection pinned to it.
 //
-// All request state lives in the per-connection CorRestState (arena, kjson,
+// All request state lives in the per-connection CorRestState (arena, corJson,
 // in/out, userData -> per-conn corNgsild), so a worker needs nothing but
 // `corRestP = conP` — the I/O thread already ran corRestStateInit. The deferred
 // notification caches are per-connection too, and still flushed by the

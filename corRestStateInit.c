@@ -11,7 +11,7 @@
 
 #include "kalloc/kaBufferInit.h"            // kaBufferInit
 #include "kalloc/kaBufferReset.h"           // kaBufferReset
-#include "kjson/kjBufferCreate.h"           // kjBufferCreate
+#include "corJson/corJsonCreate.h"          // corJsonCreate
 
 #include "corRest/CorRestState.h"             // CorRestState, corRest
 #include "corRest/CorRestVerb.h"              // corRestVerbFromString
@@ -54,8 +54,9 @@ void corRestStateInit(void* connection, const char* url, const char* method)
   // >= chunk size, so this also caps the max single allocation.
   kaBufferInit(&corRest.kalloc, corRest.kallocBuffer, sizeof(corRest.kallocBuffer), 256 * 1024, NULL, "corRest");
 
-  // Initialize kjson with kalloc
-  corRest.kjsonP = kjBufferCreate(&corRest.kjson, &corRest.kalloc);
+  // The parser, and the allocator every tree of this request is built in
+  corRest.corJsonP = corJsonCreate(&corRest.corJson, &corRest.kalloc);
+  corRest.kallocP  = &corRest.kalloc;
 
   // Verb
   corRest.in.verb       = corRestVerbFromString(method);

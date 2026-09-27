@@ -11,7 +11,7 @@
 
 #include <stdbool.h>
 
-#include "kjson/KjNode.h"
+#include "corTree/CorNode.h"
 #include "corRest/CorRestVerb.h"
 #include "corRest/CorRestKeyValue.h"
 
@@ -88,7 +88,7 @@ typedef struct CorRestIn
   // Payload
   char*       payload;
   int         payloadSize;
-  KjNode*     requestTree;                        // parsed JSON payload body
+  CorNode*    requestTree;                        // parsed JSON payload body
 
   // Content-Type header value (convenience pointer into httpHeaders), and its
   // media type classified on reception

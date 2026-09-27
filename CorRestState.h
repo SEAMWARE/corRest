@@ -13,7 +13,7 @@
 #include <stddef.h>                       // NULL - came in via microhttpd.h until this header stopped including it
 
 #include "kalloc/KAlloc.h"
-#include "kjson/kjson.h"
+#include "corJson/CorJson.h"
 
 #include "corRest/CorRestService.h"
 #include "corRest/CorRestIn.h"
@@ -44,9 +44,19 @@ typedef struct CorRestState
   KAlloc                  kalloc;
   char                    kallocBuffer[8 * 1024];   // initial inline buffer
 
+  //
+  // kallocP - the allocator every tree for this request is built in: &kalloc
+  // once the state is initialised, NULL before that. The corTree builders take
+  // an allocator and read NULL as "use malloc", which is exactly what they did
+  // when they took the parser handle and it was still NULL - so this is set
+  // wherever corJsonP is, and a thread that never initialised its state keeps
+  // both NULL, as before.
+  //
+  KAlloc*                 kallocP;
+
   // JSON parser
-  Kjson                   kjson;
-  Kjson*                  kjsonP;
+  CorJson                 corJson;
+  CorJson*                corJsonP;
 
   // Incoming request
   CorRestIn                in;
