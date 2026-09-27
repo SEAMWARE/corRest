@@ -139,17 +139,17 @@ make ci         # clean + install
 make di         # debug + install
 ```
 
-`libcorRest.a` links statically into its consumers. Sibling k-lib repos must be
+`libcorRest.a` links statically into its consumers. Sibling repos must be
 present (the build references `../<lib>/lib<lib>.a`).
 
 ## Dependencies
 
-Sibling k-lib repos (one `.a` each):
+Sibling repos (one `.a` each):
 
 - [`corAlloc`](https://github.com/SEAMWARE/corAlloc) — arena allocator (`CorAlloc`)
 - [`corTree`](https://github.com/SEAMWARE/corTree) — the tree (`CorNode`)
 - [`corJson`](https://github.com/SEAMWARE/corJson) — JSON parsing and rendering
-- [`kbase`](https://gitlab.com/kzangeli/kbase) — core utilities
+- [`corBase`](https://github.com/SEAMWARE/corBase) — core utilities and the library log (`COR_LIB_*`)
 - [`corLog`](https://github.com/SEAMWARE/corLog) — logging and trace levels
 
 System libraries: `libmicrohttpd` (HTTP server), `openssl` (`ssl`/`crypto`, TLS
