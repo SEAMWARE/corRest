@@ -632,7 +632,7 @@ void corRestProcessRequest(void)
     // RFC 9457 §3.2 extension members (e.g. registrationId of a failed forward).
     if (corRest.out.problemExtras != NULL)
     {
-      CorNode* m = corRest.out.problemExtras->value.firstChildP;
+      CorNode* m = corRest.out.problemExtras->value.head;
       while (m != NULL)
       {
         CorNode* next = m->next;
