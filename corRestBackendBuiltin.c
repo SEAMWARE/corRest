@@ -63,7 +63,7 @@
 
 #include "kalloc/kaAlloc.h"               // kaAlloc
 #include "kalloc/kaStrdup.h"              // kaStrdup
-#include "ktrace/kTrace.h"                // KT_V
+#include "corLog/corLog.h"                // COR_V
 
 #include "corHttp/CorHttp.h"              // CorHttpServer, CorHttpConn
 
@@ -177,7 +177,7 @@ static void requestResponseFill(CorHttpConn* connP)
 //
 static void httpRequestCb(CorHttpConn* connP)
 {
-  KT_V("Request: %s %s", connP->method.s, connP->path.s);  // one line per request (-v)
+  COR_V("Request: %s %s", connP->method.s, connP->path.s); // one line per request (-v)
 
   //
   // One CorRestState per request, hung on the connection - the same arrangement
