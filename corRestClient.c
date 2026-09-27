@@ -23,8 +23,8 @@
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
 
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientRequest, CorRestClientResponse
-#include "kalloc/kaAlloc.h"                      // kaAlloc
-#include "kalloc/KAlloc.h"                         // KAlloc
+#include "corAlloc/corAlloc.h"                   // corAlloc
+#include "corAlloc/CorAlloc.h"                     // CorAlloc
 #include "corTree/CorNode.h"                     // CorNode
 #include "corJson/corJsonRender.h"               // corJsonFastRender
 #include "corJson/corJsonRenderSize.h"           // corJsonFastRenderSize
@@ -156,7 +156,7 @@ static int urlParse(CorRestClientRequest* req)
 //
 // corRestClientRequestInit - Initialize a request
 //
-void corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, KAlloc* allocP)
+void corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, CorAlloc* allocP)
 {
   memset(req, 0, sizeof(CorRestClientRequest));
 
@@ -184,7 +184,7 @@ void corRestClientRequestHeader(CorRestClientRequest* req, const char* name, con
     CorRestKeyValue* newV;
 
     if (req->allocP != NULL)
-      newV = (CorRestKeyValue*)kaAlloc(req->allocP, newSize * sizeof(CorRestKeyValue));
+      newV = (CorRestKeyValue*)corAlloc(req->allocP, newSize * sizeof(CorRestKeyValue));
     else
       newV = (CorRestKeyValue*)malloc(newSize * sizeof(CorRestKeyValue));
 
@@ -445,7 +445,7 @@ static int connReadMore(CorRestClientConn* conn, int timeoutMs)
 
 // Forward declarations
 int corRestClientResponseComplete(CorRestClientConn* conn);
-int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, KAlloc* allocP);
+int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, CorAlloc* allocP);
 
 
 

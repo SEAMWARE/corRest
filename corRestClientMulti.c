@@ -25,13 +25,13 @@
 #include <time.h>                                // clock_gettime
 
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientMulti, CorRestClientRequest, CorRestClientResponse
-#include "kalloc/KAlloc.h"                       // KAlloc
+#include "corAlloc/CorAlloc.h"                   // CorAlloc
 
 
 
 // Forward declarations from corRestClientParse.c
 extern int corRestClientResponseComplete(CorRestClientConn* conn);
-extern int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, KAlloc* allocP);
+extern int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, CorAlloc* allocP);
 
 
 
@@ -60,7 +60,7 @@ typedef struct CorrMultiEntry
   CorRestClientConn*      conn;
   CorRestClientRequest    req;
   CorRestClientResponse   resp;
-  KAlloc*                allocP;
+  CorAlloc*              allocP;
   void*                  userData;
 
   char*                  sendBuf;
@@ -153,7 +153,7 @@ CorRestClientMulti* corRestClientMultiCreate(int capacity)
 int corRestClientMultiAdd(CorRestClientMulti* multi, CorRestVerb verb, const char* url,
                          CorRestKeyValue* headers, int headerCount,
                          const char* body, int bodyLen,
-                         KAlloc* allocP, void* userData)
+                         CorAlloc* allocP, void* userData)
 {
   if (multi->count >= multi->capacity)
     return -1;

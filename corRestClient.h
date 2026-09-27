@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#include "kalloc/KAlloc.h"
+#include "corAlloc/CorAlloc.h"
 #include "corTree/CorNode.h"
 
 #include "corRest/CorRestVerb.h"
@@ -124,7 +124,7 @@ typedef struct CorRestClientRequest
   int               maxRedirects;
 
   // Allocator for response allocation (NULL = use malloc)
-  KAlloc*           allocP;
+  CorAlloc*         allocP;
 } CorRestClientRequest;
 
 
@@ -185,7 +185,7 @@ extern const char* corRestClientUserAgent;
 //
 // Synchronous request building
 //
-extern void  corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, KAlloc* allocP);
+extern void  corRestClientRequestInit(CorRestClientRequest* req, CorRestVerb verb, const char* url, CorAlloc* allocP);
 extern void  corRestClientRequestHeader(CorRestClientRequest* req, const char* name, const char* value);
 extern void  corRestClientRequestBody(CorRestClientRequest* req, const char* body, int bodyLen);
 extern void  corRestClientRequestTimeout(CorRestClientRequest* req, int connectMs, int requestMs);
@@ -233,7 +233,7 @@ extern CorRestClientMulti*       corRestClientMultiCreate(int capacity);
 extern int                      corRestClientMultiAdd(CorRestClientMulti* multi, CorRestVerb verb, const char* url,
                                                      CorRestKeyValue* headers, int headerCount,
                                                      const char* body, int bodyLen,
-                                                     KAlloc* allocP, void* userData);
+                                                     CorAlloc* allocP, void* userData);
 extern int                      corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs);
 extern CorRestClientResponse*    corRestClientMultiResponse(CorRestClientMulti* multi, int index);
 extern void                     corRestClientMultiDestroy(CorRestClientMulti* multi);

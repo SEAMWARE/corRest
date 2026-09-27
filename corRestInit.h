@@ -21,7 +21,7 @@
 #ifndef CORREST_INIT_H_
 #define CORREST_INIT_H_
 
-#include "kalloc/KAlloc.h"            // KAlloc
+#include "corAlloc/CorAlloc.h"        // CorAlloc
 #include "corRest/CorRestService.h"
 #include "corRest/CorRestVerb.h"        // CorRestVerb
 #include "corRest/CorRestKeyValue.h"    // CorRestKeyValue
@@ -96,7 +96,7 @@ extern int corRestProcessInProcess(CorRestVerb       verb,
                                   int              headerCount,
                                   const char*      body,
                                   int              bodyLen,
-                                  KAlloc*          respAllocP,
+                                  CorAlloc*        respAllocP,
                                   char**           respBodyP,
                                   int*             respBodyLenP,
                                   CorRestKeyValue** respHeaderVP,

@@ -11,7 +11,7 @@
 #ifndef CORREST_URL_VALUE_ENCODE_H_
 #define CORREST_URL_VALUE_ENCODE_H_
 
-#include "kalloc/kaAlloc.h"                            // KAlloc
+#include "corAlloc/corAlloc.h"                         // CorAlloc
 
 
 
@@ -27,7 +27,7 @@
 // Returns `value` itself when nothing needs encoding (the common case, no
 // allocation); otherwise a fresh string from kaP. NULL in gives "" out.
 //
-extern const char* corRestUrlValueEncode(const char* value, KAlloc* kaP);
+extern const char* corRestUrlValueEncode(const char* value, CorAlloc* kaP);
 
 
 

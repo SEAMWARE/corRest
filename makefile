@@ -135,11 +135,11 @@ TEST          = corRestTest
 TEST_SOURCES  = corRestTest.c
 TEST_OBJS     = $(addprefix $(OBJDIR)/,$(TEST_SOURCES:.c=.o))
 
-SO_LDFLAGS    = -L../kalloc -L../corJson -L../corTree -L../kbase -L../corLog
-SO_LIBS       = -lkalloc -lcorJson -lcorTree -lcorLog -lkbase $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread
-SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../kalloc:$$ORIGIN/../corJson:$$ORIGIN/../corTree:$$ORIGIN/../kbase:$$ORIGIN/../corLog'
+SO_LDFLAGS    = -L../corAlloc -L../corJson -L../corTree -L../kbase -L../corLog
+SO_LIBS       = -lcorAlloc -lcorJson -lcorTree -lcorLog -lkbase $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread
+SO_RPATH      = -Wl,-rpath,'$$ORIGIN/../corAlloc:$$ORIGIN/../corJson:$$ORIGIN/../corTree:$$ORIGIN/../kbase:$$ORIGIN/../corLog'
 
-LIBS          = ../kalloc/libkalloc.a ../corJson/libcorJson.a ../corTree/libcorTree.a ../corLog/libcorLog.a ../kbase/libkbase.a $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread -lm
+LIBS          = ../corAlloc/libcorAlloc.a ../corJson/libcorJson.a ../corTree/libcorTree.a ../corLog/libcorLog.a ../kbase/libkbase.a $(HTTP_SERVER_ARCHIVE) $(HTTP_SERVER_LIBS) -lssl -lcrypto -lpthread -lm
 
 #
 # Built per flavour, then STAGED to the repo root where every consumer expects

@@ -9,7 +9,7 @@
 #include <stdbool.h>                                   // bool
 #include <string.h>                                    // strlen
 
-#include "kalloc/kaAlloc.h"                            // kaAlloc
+#include "corAlloc/corAlloc.h"                         // corAlloc
 
 #include "corRest/corRestUrlValueEncode.h"             // Own interface
 
@@ -58,7 +58,7 @@ static bool mustEncode(unsigned char c)
 //
 // corRestUrlValueEncode -
 //
-const char* corRestUrlValueEncode(const char* value, KAlloc* kaP)
+const char* corRestUrlValueEncode(const char* value, CorAlloc* kaP)
 {
   static const char hex[] = "0123456789ABCDEF";
 
@@ -76,7 +76,7 @@ const char* corRestUrlValueEncode(const char* value, KAlloc* kaP)
   if (extra == 0)
     return value;                  // nothing to do - hand back what came in
 
-  char* out = (char*) kaAlloc(kaP, strlen(value) + extra + 1);
+  char* out = (char*) corAlloc(kaP, strlen(value) + extra + 1);
 
   if (out == NULL)
     return value;                  // out of arena: raw is wrong, but silence is worse
