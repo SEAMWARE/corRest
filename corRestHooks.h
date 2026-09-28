@@ -72,6 +72,12 @@ typedef void  (*CorRestUserDataFreeHook)(void* userData);
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
+//
+// corRestSetPrePayloadParseHook - called right BEFORE the request body is parsed, with the
+// route already resolved (corRest.serviceP) - the place to configure corRest.corJsonP for
+// this body (e.g. its keyF member-name hook). NOT called when there is no body.
+//
+extern void corRestSetPrePayloadParseHook(CorRestHook fn);
 extern void corRestSetPayloadParseHook(CorRestHook fn);
 extern void corRestSetPayloadRenderHook(CorRestHook fn);
 extern void corRestSetParamHook(CorRestParamHook fn);

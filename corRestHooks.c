@@ -27,6 +27,7 @@ static bool preServiceHookNoop(void) { return true; }
 // Globals (accessed from corRestInit.c during request handling)
 //
 CorRestHook            corRestPreDispatchHook   = hookNoop;
+CorRestHook            corRestPrePayloadParseHook = hookNoop;
 CorRestHook            corRestPayloadParseHook  = hookNoop;
 CorRestHook            corRestPayloadRenderHook = hookNoop;
 CorRestParamHook       corRestParamHookF        = NULL;
@@ -59,6 +60,17 @@ bool                  corRestAcceptGeoJsonInput = false;
 void corRestSetPreDispatchHook(CorRestHook fn)
 {
   corRestPreDispatchHook = (fn != NULL) ? fn : hookNoop;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestSetPrePayloadParseHook -
+//
+void corRestSetPrePayloadParseHook(CorRestHook fn)
+{
+  corRestPrePayloadParseHook = (fn != NULL) ? fn : hookNoop;
 }
 
 
