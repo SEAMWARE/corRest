@@ -902,7 +902,19 @@ static int              corRestShards      = 1;
 static pthread_t*       corRestWorkerV     = NULL;
 static int*             corRestWorkerShard = NULL;   // which queue each worker serves
 static int              corRestWorkerCount = 0;
-static volatile bool    corRestWorkersRun  = false;
+//
+// corRestWorkersRun - is the async pool up? Written by the main thread, read by the HTTP threads.
+//
+// The HTTP server starts BEFORE the pool (corRestInit), so its threads are already running when
+// corRestWorkerPoolStart sets up the queues - and this flag is all that tells them the queues
+// are ready. It used to be a `volatile bool`, and volatile orders nothing: the compiler, or a CPU
+// with a weaker memory model than x86 (ARM), may make the flag visible before the queue it is
+// guarding - a race detector (drd) reports exactly that. So it is published with a RELEASE store
+// once the queues are set, and read with ACQUIRE loads: a thread that sees true sees the queues.
+//
+static bool             corRestWorkersRun  = false;
+
+static inline bool workersRun(void) { return __atomic_load_n(&corRestWorkersRun, __ATOMIC_ACQUIRE); }
 
 
 
@@ -949,7 +961,7 @@ static void* corRestWorkerMain(void* shardP)
   while (true)
   {
     pthread_mutex_lock(&qP->mtx);
-    while (qP->head == NULL && corRestWorkersRun)
+    while (qP->head == NULL && workersRun())
       pthread_cond_wait(&qP->cond, &qP->mtx);
 
     if (qP->head == NULL)           // woken with an empty queue => shutdown drain done
@@ -1033,7 +1045,7 @@ int corRestWorkerPoolStart(int workers)
     return -1;
   }
 
-  corRestWorkersRun = true;
+  __atomic_store_n(&corRestWorkersRun, true, __ATOMIC_RELEASE);   // the queues above, published
 
   //
   // Round-robin rather than contiguous blocks: with workers not a multiple of
@@ -1084,7 +1096,7 @@ void corRestWorkerPoolStop(void)
   for (int ix = 0; ix < corRestShards; ix++)
   {
     pthread_mutex_lock(&corRestQueueV[ix].mtx);
-    corRestWorkersRun = false;
+    __atomic_store_n(&corRestWorkersRun, false, __ATOMIC_RELEASE);
     pthread_cond_broadcast(&corRestQueueV[ix].cond);
     pthread_mutex_unlock(&corRestQueueV[ix].mtx);
   }
@@ -1115,7 +1127,7 @@ void corRestWorkerPoolStop(void)
 //
 bool corRestAsyncPoolUp(void)
 {
-  return corRestWorkersRun;
+  return workersRun();
 }
 
 void corRestAsyncEnqueue(CorRestState* stateP)
@@ -1131,7 +1143,7 @@ void corRestAsyncEnqueue(CorRestState* stateP)
 //
 bool corRestAsyncFinish(CorRestState* stateP)
 {
-  if (corRestWorkersRun == false)
+  if (workersRun() == false)
     return false;
 
   stateP->asyncFinishing = true;
