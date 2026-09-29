@@ -69,6 +69,7 @@ void corRestHttpsServerCredentialsSet(char* keyPem, char* certPem)
 // Hook globals (defined in corRestHooks.c)
 //
 extern CorRestHook            corRestPreDispatchHook;
+extern CorRestHook            corRestPrePayloadParseHook;
 extern CorRestHook            corRestPayloadParseHook;
 extern CorRestHook            corRestPayloadRenderHook;
 extern CorRestParamHook       corRestParamHookF;
@@ -430,7 +431,15 @@ void corRestProcessRequest(void)
   // Parse incoming JSON payload (if any)
   if (corRest.in.payloadSize > 0)
   {
+    corRestPrePayloadParseHook();
     corRest.in.requestTree = corJsonParse(corRest.corJsonP, corRest.in.payload);
+
+    //
+    // Whatever the pre-parse hook configured was for THIS body only: the same CorJson
+    // parses every other text of the connection (payloads a bridge hands over, ...)
+    //
+    corRest.corJsonP->keyF     = NULL;
+    corRest.corJsonP->keyDataP = NULL;
 
     if (corRest.in.requestTree != NULL)
       corRestPayloadParseHook();
