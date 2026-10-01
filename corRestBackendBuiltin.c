@@ -137,6 +137,7 @@ void corRestHttpLoopsSet(int loops)
 extern CorRestUserDataAllocHook  corRestUserDataAllocHookF;
 extern CorRestUserDataFreeHook   corRestUserDataFreeHookF;
 extern CorRestHook               corRestPostResponseHook;
+extern CorRestFinishInlineHook   corRestFinishInlineHookF;
 extern unsigned long long        corRestMaxRequestSize;
 
 
@@ -355,6 +356,23 @@ static void httpRequestDone(CorHttpConn* connP)
 
   connP->userData    = NULL;        // before anything can fail: this must not run twice
   stateP->connection = NULL;        // the connection is not this request's any more
+
+  //
+  // ...unless the request left nothing for the phase that could wait - the app says (see
+  // CorRestFinishInlineHook). Then a worker would only cost two thread switches.
+  //
+  if (corRestFinishInlineHookF != NULL)
+  {
+    corRestP = stateP;
+    bool here = corRestFinishInlineHookF();
+    corRestP  = NULL;
+
+    if (here == true)
+    {
+      corRestBackendFinish(stateP);
+      return;
+    }
+  }
 
   if (corRestAsyncFinish(stateP) == true)
     return;
