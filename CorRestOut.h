@@ -34,6 +34,7 @@ typedef struct CorRestOut
   // Response body (when set directly, not via responseTree)
   char*       payload;
   int         payloadSize;
+  bool        noRender;           // the transport carries responseTree as it is (cor://): no JSON render
 
   // Problem details (RFC 9457) - set by service routines on error
   const char*  problemType;         // Error type URI (NULL = no error)
