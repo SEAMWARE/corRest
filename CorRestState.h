@@ -99,6 +99,16 @@ typedef struct CorRestState
   struct CorRestState*     asyncNext;
 
   //
+  // resumeF / finishF - a transport of its own (cor://) in place of the HTTP backend's
+  //
+  // A worker hands a processed request back with corRestBackendResume and runs the post-response
+  // phase with corRestBackendFinish - the HTTP backend's. A request that came in over another
+  // transport sets these, and the worker calls them instead. NULL: the backend's, as always.
+  //
+  void                   (*resumeF)(struct CorRestState* stateP);
+  void                   (*finishF)(struct CorRestState* stateP);
+
+  //
   // shard - which work queue this request belongs to
   //
   // Set by the BACKEND, because only the backend knows how many event loops

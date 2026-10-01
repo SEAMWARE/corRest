@@ -1007,7 +1007,10 @@ static void* corRestWorkerMain(void* shardP)
     //
     if (conP->asyncFinishing == true)
     {
-      corRestBackendFinish(conP);
+      if (conP->finishF != NULL)
+        conP->finishF(conP);
+      else
+        corRestBackendFinish(conP);
       corRestP = NULL;
       continue;
     }
@@ -1025,7 +1028,10 @@ static void* corRestWorkerMain(void* shardP)
     // state of this worker thread. After this call the connection may already
     // be finished and freed by the loop, so nothing below may touch conP.
     //
-    corRestBackendResume(conP);
+    if (conP->resumeF != NULL)
+      conP->resumeF(conP);
+    else
+      corRestBackendResume(conP);
 
     corRestP = NULL;                // drop the bind; the request has left this thread
   }

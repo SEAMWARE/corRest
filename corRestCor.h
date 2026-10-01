@@ -41,9 +41,9 @@ extern void corRestCorInit(const CorBinCodec* codecP, const char** namespaceV, i
 
 // -----------------------------------------------------------------------------
 //
-// corRestCorListen - accept cor:// connections on a port (a thread of its own); false on failure
+// corRestCorListen - accept cor:// connections on a port, served by loopCount event loops; false on failure
 //
-extern bool corRestCorListen(unsigned short port);
+extern bool corRestCorListen(unsigned short port, int loopCount);
 
 
 
