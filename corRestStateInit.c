@@ -6,6 +6,7 @@
 // Copyright 2026 Seamware
 // SPDX-License-Identifier: Apache-2.0
 //
+#include <stddef.h>                                  // offsetof
 #include <stdlib.h>                         // free, atoi
 #include <string.h>                         // memset, strdup, strchr, strlen
 
@@ -44,7 +45,15 @@ extern int corRestDefaultPrettySpaces;
 //
 void corRestStateInit(void* connection, const char* url, const char* method)
 {
-  memset(&corRest, 0, sizeof(CorRestState));
+  //
+  // Everything but the arena's inline buffer, which the arena overwrites as it allocates: 8 KB of the
+  // 10 KB state need no zeroing, on every request
+  //
+  size_t bufStart = offsetof(CorRestState, kallocBuffer);
+  size_t bufEnd   = bufStart + sizeof(((CorRestState*) 0)->kallocBuffer);
+
+  memset(&corRest, 0, bufStart);
+  memset(((char*) &corRest) + bufEnd, 0, sizeof(CorRestState) - bufEnd);
 
   corRest.connection = connection;
 
