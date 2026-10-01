@@ -21,6 +21,7 @@
 #ifndef CORREST_INIT_H_
 #define CORREST_INIT_H_
 
+#include <stdint.h>                     // uint64_t
 #include "corAlloc/CorAlloc.h"        // CorAlloc
 #include "corRest/CorRestService.h"
 #include "corRest/CorRestVerb.h"        // CorRestVerb
@@ -101,5 +102,16 @@ extern int corRestProcessInProcess(CorRestVerb       verb,
                                   int*             respBodyLenP,
                                   CorRestKeyValue** respHeaderVP,
                                   int*             respHeaderCountP);
+
+// -----------------------------------------------------------------------------
+//
+// corRestDispatchCounts - requests run on their I/O thread (inline) and handed to a worker, since start
+//
+// Only requests where there was a choice: with the worker pool down everything runs inline and none
+// of it is counted.
+//
+extern void corRestDispatchCounts(uint64_t* inlineP, uint64_t* handedOffP);
+
+
 
 #endif  // CORREST_INIT_H_

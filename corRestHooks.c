@@ -33,6 +33,8 @@ CorRestHook            corRestPayloadRenderHook = hookNoop;
 CorRestParamHook       corRestParamHookF        = NULL;
 CorRestPreServiceHook  corRestPreServiceHookF   = preServiceHookNoop;
 CorRestHook            corRestPostResponseHook  = hookNoop;
+CorRestInlineHook      corRestInlineHookF       = NULL;
+CorRestFinishInlineHook corRestFinishInlineHookF = NULL;
 CorRestServiceInitHook corRestServiceInitHookF  = NULL;
 CorRestUserDataAllocHook corRestUserDataAllocHookF = NULL;
 CorRestUserDataFreeHook  corRestUserDataFreeHookF  = NULL;
@@ -149,6 +151,17 @@ void corRestSetPostResponseHook(CorRestHook fn)
 
 // -----------------------------------------------------------------------------
 //
+// corRestSetInlineHook -
+//
+void corRestSetInlineHook(CorRestInlineHook fn)
+{
+  corRestInlineHookF = fn;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestSetUserDataHooks - register create/destroy for per-connection userData.
 //
 void corRestSetUserDataHooks(CorRestUserDataAllocHook allocFn, CorRestUserDataFreeHook freeFn)
@@ -206,4 +219,15 @@ void corRestCorsConfig(const CorRestCorsConfig* config)
     corRestCors = *config;
   else
     memset(&corRestCors, 0, sizeof(corRestCors));
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestSetFinishInlineHook -
+//
+void corRestSetFinishInlineHook(CorRestFinishInlineHook fn)
+{
+  corRestFinishInlineHookF = fn;
 }

@@ -137,6 +137,7 @@ void corRestHttpLoopsSet(int loops)
 extern CorRestUserDataAllocHook  corRestUserDataAllocHookF;
 extern CorRestUserDataFreeHook   corRestUserDataFreeHookF;
 extern CorRestHook               corRestPostResponseHook;
+extern CorRestFinishInlineHook   corRestFinishInlineHookF;
 extern unsigned long long        corRestMaxRequestSize;
 
 
@@ -310,11 +311,12 @@ static void httpRequestCb(CorHttpConn* connP)
     }
   }
 
-  if (corRestAsyncPoolUp() == true)
+  if (corRestAsyncDispatch() == true)
   {
     //
     // Off the event loop: a DB round-trip or a distributed operation would stop
-    // every other connection for its duration. Suspend BEFORE enqueue - a
+    // every other connection for its duration. A request that waits on nothing
+    // runs on the loop instead - see CorRestInlineHook. Suspend BEFORE enqueue - a
     // worker can finish before the enqueue call returns.
     //
     corHttpSuspend(connP);
@@ -354,6 +356,23 @@ static void httpRequestDone(CorHttpConn* connP)
 
   connP->userData    = NULL;        // before anything can fail: this must not run twice
   stateP->connection = NULL;        // the connection is not this request's any more
+
+  //
+  // ...unless the request left nothing for the phase that could wait - the app says (see
+  // CorRestFinishInlineHook). Then a worker would only cost two thread switches.
+  //
+  if (corRestFinishInlineHookF != NULL)
+  {
+    corRestP = stateP;
+    bool here = corRestFinishInlineHookF();
+    corRestP  = NULL;
+
+    if (here == true)
+    {
+      corRestBackendFinish(stateP);
+      return;
+    }
+  }
 
   if (corRestAsyncFinish(stateP) == true)
     return;

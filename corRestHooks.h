@@ -69,6 +69,44 @@ typedef void  (*CorRestUserDataFreeHook)(void* userData);
 
 // -----------------------------------------------------------------------------
 //
+// CorRestInlineHook - may this request run on the I/O thread that read it?
+//
+// Asked once per request, where the backend would otherwise suspend the connection and hand the
+// request to a worker. The hand-off exists so that a request that WAITS - a database round trip, a
+// distributed operation, an @context download - never stops the other connections of its I/O
+// thread. It is also two thread switches per request, and for a request that waits on nothing it
+// costs more than the request itself (a corDB retrieve: ~93k cycles with the hop, ~50k without).
+//
+// The app knows what can wait, corRest does not: true = run it here, false = hand it off as
+// before. The request is parsed only as far as the backend got - verb, URL, headers, raw body - and
+// the answer must come from those, cheaply. No hook = every request is handed off, as it always was.
+// The post-response phase (deferred notifications) is not affected.
+//
+typedef bool (*CorRestInlineHook)(void);
+
+
+
+
+// -----------------------------------------------------------------------------
+//
+// CorRestFinishInlineHook - may this request's post-response phase run on the I/O thread?
+//
+// Asked by the built-in server (corHttp) once the response is on the wire. Its event loop is ONE
+// thread, so the phase - deferred notifications above all - normally goes to a worker: a
+// notification compacted with an @context the broker hosts itself would otherwise wait for an
+// answer only that loop can give. But most requests leave nothing behind for the phase (every read,
+// every write no subscription matched), and then the hop to the worker is pure cost: two more thread
+// switches per request, measured at a third of the server's throughput.
+//
+// true = run it here; false = hand it to a worker, as before. Called with the request's state bound
+// (corRest). No hook = always a worker. libmicrohttpd runs the phase on its own I/O threads anyway.
+//
+typedef bool (*CorRestFinishInlineHook)(void);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
@@ -84,6 +122,8 @@ extern void corRestSetParamHook(CorRestParamHook fn);
 extern void corRestSetPreServiceHook(CorRestPreServiceHook fn);
 extern void corRestSetServiceInitHook(CorRestServiceInitHook fn);
 extern void corRestSetPostResponseHook(CorRestHook fn);
+extern void corRestSetInlineHook(CorRestInlineHook fn);
+extern void corRestSetFinishInlineHook(CorRestFinishInlineHook fn);
 extern void corRestSetUserDataHooks(CorRestUserDataAllocHook allocFn, CorRestUserDataFreeHook freeFn);
 extern void corRestSetPrettySpaces(int spaces);
 extern void corRestSetMaxRequestSize(unsigned long long bytes);

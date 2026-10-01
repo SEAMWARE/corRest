@@ -156,6 +156,17 @@ extern void  corRestAsyncEnqueue(CorRestState* stateP);
 
 
 //
+// corRestAsyncDispatch - the question the backends ask instead of corRestAsyncPoolUp alone:
+// hand this request off (true), or process it here (false). The pool must be up AND the app's
+// inline hook (CorRestInlineHook) must not claim the request.
+//
+//   if (corRestAsyncDispatch())  { suspend(); corRestAsyncEnqueue(stateP); return; }
+//   corRestProcessRequest();
+//
+extern bool  corRestAsyncDispatch(void);
+
+
+//
 // corRestAsyncFinish - hand the POST-RESPONSE phase to a worker
 //
 // Returns true when a worker has taken it - the caller must then not touch
