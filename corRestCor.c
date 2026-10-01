@@ -113,6 +113,9 @@ typedef struct CorConn
   CorBinTables  in;             // the mirror of what the peer has defined
   bool          tables;         // both initialised
   uint32_t      correlation;
+  char          rbuf[16 * 1024];  // what the socket gave beyond what has been consumed - one read() usually brings a whole frame
+  int           rpos;
+  int           rlen;
   char          peer[160];      // host:port, for the client cache and the log - host (128) + port (16)
 } CorConn;
 
@@ -162,11 +165,10 @@ static bool writeAll(int fd, const void* p, int n, int timeoutMs)
 {
   const char* cP = p;
 
+  (void) timeoutMs;                                  // blocking socket: send() waits - SO_SNDTIMEO bounds it (clientConnect)
+
   while (n > 0)
   {
-    if (ioWait(fd, POLLOUT, timeoutMs) == false)
-      return false;
-
     ssize_t w = send(fd, cP, n, MSG_NOSIGNAL);
     if (w < 0)
     {
@@ -186,35 +188,65 @@ static bool writeAll(int fd, const void* p, int n, int timeoutMs)
 
 // -----------------------------------------------------------------------------
 //
-// readAll - exactly n bytes; timeoutMs < 0 waits for ever (a server waiting for the next request)
+// connRead - exactly n bytes, from the connection's buffer first and the socket after
 //
-static bool readAll(int fd, void* p, int n, int timeoutMs)
+// One read() asks for as much as the buffer holds, so a frame - header and tree - normally arrives in
+// a single system call. poll() only when there is nothing buffered AND a timeout applies; timeoutMs < 0
+// (a server waiting for its next request) is a plain blocking read.
+//
+static bool connRead(CorConn* cP, void* p, int n, int timeoutMs)
 {
-  char* cP = p;
+  char* outP = p;
 
   while (n > 0)
   {
-    if (ioWait(fd, POLLIN, timeoutMs) == false)
+    int avail = cP->rlen - cP->rpos;
+
+    if (avail > 0)
+    {
+      int take = (avail < n) ? avail : n;
+
+      memcpy(outP, &cP->rbuf[cP->rpos], take);
+      cP->rpos += take;
+      outP     += take;
+      n        -= take;
+      continue;
+    }
+
+    if ((timeoutMs >= 0) && (ioWait(cP->fd, POLLIN, timeoutMs) == false))
     {
       errno = ETIMEDOUT;
       return false;
     }
 
-    ssize_t r = read(fd, cP, n);
+    //
+    // A large remainder goes straight to its destination; anything else through the buffer
+    //
+    ssize_t r = (n >= (int) sizeof(cP->rbuf)) ? read(cP->fd, outP, n) : read(cP->fd, cP->rbuf, sizeof(cP->rbuf));
+
     if (r < 0)
     {
       if (errno == EINTR)
         continue;
       return false;
     }
+
     if (r == 0)                                      // the peer closed
     {
       errno = ECONNRESET;
       return false;
     }
 
-    cP += r;
-    n  -= r;
+    if (n >= (int) sizeof(cP->rbuf))
+    {
+      outP += r;
+      n    -= r;
+    }
+    else
+    {
+      cP->rpos = 0;
+      cP->rlen = (int) r;
+    }
   }
 
   return true;
@@ -228,25 +260,38 @@ static bool readAll(int fd, void* p, int n, int timeoutMs)
 //
 static bool frameSend(CorConn* cP, uint8_t type, uint32_t correlation, CorNode* treeP, int timeoutMs)
 {
-  CorBinBuffer body   = { NULL, 0, 0 };
-  bool         plain  = (type == FRAME_HELLO) || (type == FRAME_HELLO_ACK);
+  CorBinBuffer frame = { NULL, 0, 0 };
+  bool         plain = (type == FRAME_HELLO) || (type == FRAME_HELLO_ACK);
+  uint8_t      header[FRAME_HEADER_LEN] = { 0 };
 
-  if (corTreeBinEncode(treeP, plain ? NULL : codecP, plain ? NULL : &cP->out, &body) == false)
+  //
+  // Header and tree in ONE buffer, so one send(): the header's length is patched in after the encoding
+  //
+  frame.buf  = malloc(4096);
+  frame.size = (frame.buf != NULL) ? 4096 : 0;
+
+  if (frame.buf == NULL)
+    return false;
+
+  memcpy(frame.buf, header, FRAME_HEADER_LEN);
+  frame.len = FRAME_HEADER_LEN;
+
+  if (corTreeBinEncode(treeP, plain ? NULL : codecP, plain ? NULL : &cP->out, &frame) == false)
   {
-    free(body.buf);
+    free(frame.buf);
     return false;
   }
 
-  uint8_t header[FRAME_HEADER_LEN] = { 0 };
+  uint32_t bodyLen = frame.len - FRAME_HEADER_LEN;
 
-  memcpy(header, frameMagic, 4);
-  header[4] = type;
-  memcpy(&header[8],  &correlation, 4);                // little-endian, as the hosts are
-  memcpy(&header[12], &body.len,    4);
+  memcpy(frame.buf, frameMagic, 4);
+  frame.buf[4] = type;
+  memcpy(&frame.buf[8],  &correlation, 4);             // little-endian, as the hosts are
+  memcpy(&frame.buf[12], &bodyLen,     4);
 
-  bool ok = writeAll(cP->fd, header, FRAME_HEADER_LEN, timeoutMs) && writeAll(cP->fd, body.buf, body.len, timeoutMs);
+  bool ok = writeAll(cP->fd, frame.buf, frame.len, timeoutMs);
 
-  free(body.buf);
+  free(frame.buf);
   return ok;
 }
 
@@ -260,7 +305,7 @@ static bool frameRecv(CorConn* cP, uint8_t* typeP, uint32_t* correlationP, char*
 {
   uint8_t header[FRAME_HEADER_LEN];
 
-  if (readAll(cP->fd, header, FRAME_HEADER_LEN, timeoutMs) == false)
+  if (connRead(cP, header, FRAME_HEADER_LEN, timeoutMs) == false)
   {
     *errorP = (errno == ETIMEDOUT) ? "timed out" : "connection closed";
     return false;
@@ -290,7 +335,7 @@ static bool frameRecv(CorConn* cP, uint8_t* typeP, uint32_t* correlationP, char*
     return false;
   }
 
-  if (readAll(cP->fd, buf, len, timeoutMs) == false)
+  if (connRead(cP, buf, len, timeoutMs) == false)
   {
     if (allocP == NULL)
       free(buf);
@@ -333,7 +378,9 @@ static void connClose(CorConn* cP)
 {
   if (cP->fd >= 0)
     close(cP->fd);
-  cP->fd = -1;
+  cP->fd   = -1;
+  cP->rpos = 0;
+  cP->rlen = 0;
 
   if (cP->tables == true)
   {
@@ -685,8 +732,11 @@ bool corRestCorListen(unsigned short port)
 //
 enum { CLIENT_CONNS_MAX = 8 };
 
-static __thread CorConn clientConnV[CLIENT_CONNS_MAX];
-static __thread bool    clientConnsInit = false;
+//
+// Pointers, allocated on first use: a connection carries a 16 KB read buffer, and every broker
+// thread would otherwise pay for eight of them in thread-local storage, cor:// or not
+//
+static __thread CorConn* clientConnV[CLIENT_CONNS_MAX];
 
 
 
@@ -757,8 +807,11 @@ static bool clientConnect(CorConn* cP, const char* host, const char* port, int t
     return false;
   }
 
-  int one = 1;
+  int            one = 1;
+  struct timeval tv  = { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+
   setsockopt(cP->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+  setsockopt(cP->fd, SOL_SOCKET,  SO_SNDTIMEO, &tv,  sizeof(tv));
   snprintf(cP->peer, sizeof(cP->peer), "%s:%s", host, port);
 
   //
@@ -807,30 +860,34 @@ static CorConn* clientConnGet(const char* host, const char* port, int timeoutMs,
 
   snprintf(key, sizeof(key), "%s:%s", host, port);
 
-  if (clientConnsInit == false)
-  {
-    for (int i = 0; i < CLIENT_CONNS_MAX; i++)
-      clientConnV[i].fd = -1;
-    clientConnsInit = true;
-  }
-
   CorConn* freeP = NULL;
 
   for (int i = 0; i < CLIENT_CONNS_MAX; i++)
   {
-    if ((clientConnV[i].fd >= 0) && (strcmp(clientConnV[i].peer, key) == 0))
+    CorConn* cP = clientConnV[i];
+
+    if ((cP != NULL) && (cP->fd >= 0) && (strcmp(cP->peer, key) == 0))
     {
       *reusedP = true;
-      return &clientConnV[i];
+      return cP;
     }
 
-    if ((clientConnV[i].fd < 0) && (freeP == NULL))
-      freeP = &clientConnV[i];
+    if ((freeP == NULL) && ((cP == NULL) || (cP->fd < 0)))
+    {
+      if (cP == NULL)
+      {
+        if ((cP = calloc(1, sizeof(CorConn))) == NULL)
+          continue;
+        cP->fd         = -1;
+        clientConnV[i] = cP;
+      }
+      freeP = cP;
+    }
   }
 
   if (freeP == NULL)                                 // all in use: the first one makes room
   {
-    freeP = &clientConnV[0];
+    freeP = clientConnV[0];
     connClose(freeP);
   }
 
