@@ -69,6 +69,25 @@ typedef void  (*CorRestUserDataFreeHook)(void* userData);
 
 // -----------------------------------------------------------------------------
 //
+// CorRestInlineHook - may this request run on the I/O thread that read it?
+//
+// Asked once per request, where the backend would otherwise suspend the connection and hand the
+// request to a worker. The hand-off exists so that a request that WAITS - a database round trip, a
+// distributed operation, an @context download - never stops the other connections of its I/O
+// thread. It is also two thread switches per request, and for a request that waits on nothing it
+// costs more than the request itself (a corDB retrieve: ~93k cycles with the hop, ~50k without).
+//
+// The app knows what can wait, corRest does not: true = run it here, false = hand it off as
+// before. The request is parsed only as far as the backend got - verb, URL, headers, raw body - and
+// the answer must come from those, cheaply. No hook = every request is handed off, as it always was.
+// The post-response phase (deferred notifications) is not affected.
+//
+typedef bool (*CorRestInlineHook)(void);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
@@ -84,6 +103,7 @@ extern void corRestSetParamHook(CorRestParamHook fn);
 extern void corRestSetPreServiceHook(CorRestPreServiceHook fn);
 extern void corRestSetServiceInitHook(CorRestServiceInitHook fn);
 extern void corRestSetPostResponseHook(CorRestHook fn);
+extern void corRestSetInlineHook(CorRestInlineHook fn);
 extern void corRestSetUserDataHooks(CorRestUserDataAllocHook allocFn, CorRestUserDataFreeHook freeFn);
 extern void corRestSetPrettySpaces(int spaces);
 extern void corRestSetMaxRequestSize(unsigned long long bytes);

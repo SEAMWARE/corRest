@@ -310,11 +310,12 @@ static void httpRequestCb(CorHttpConn* connP)
     }
   }
 
-  if (corRestAsyncPoolUp() == true)
+  if (corRestAsyncDispatch() == true)
   {
     //
     // Off the event loop: a DB round-trip or a distributed operation would stop
-    // every other connection for its duration. Suspend BEFORE enqueue - a
+    // every other connection for its duration. A request that waits on nothing
+    // runs on the loop instead - see CorRestInlineHook. Suspend BEFORE enqueue - a
     // worker can finish before the enqueue call returns.
     //
     corHttpSuspend(connP);

@@ -11,6 +11,7 @@
 #include <stdio.h>                      // fprintf, snprintf
 #include <time.h>                       // clock_gettime, CLOCK_MONOTONIC
 #include <pthread.h>                    // pthread_* (async worker pool)
+#include <stdatomic.h>                  // _Atomic, atomic_fetch_add_explicit, atomic_load_explicit
 
 #include "corAlloc/corAlloc.h"          // corAlloc
 #include "corAlloc/corAllocStrdup.h"    // corAllocStrdup
@@ -76,6 +77,7 @@ extern CorRestParamHook       corRestParamHookF;
 extern CorRestPreServiceHook  corRestPreServiceHookF;
 extern CorRestServiceInitHook corRestServiceInitHookF;
 extern CorRestHook            corRestPostResponseHook;
+extern CorRestInlineHook      corRestInlineHookF;
 extern CorRestUserDataAllocHook corRestUserDataAllocHookF;
 extern CorRestUserDataFreeHook  corRestUserDataFreeHookF;
 extern unsigned long long    corRestMaxRequestSize;
@@ -1137,6 +1139,45 @@ void corRestWorkerPoolStop(void)
 bool corRestAsyncPoolUp(void)
 {
   return workersRun();
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestAsyncDispatch - hand this request to a worker (true), or run it on this I/O thread (false)?
+//
+// Handed off when the pool is up and the app's inline hook does not claim the request - so with no
+// hook, exactly what the backends did before the hook existed. See CorRestInlineHook.
+//
+static _Atomic uint64_t dispatchInline    = 0;
+static _Atomic uint64_t dispatchHandedOff = 0;
+
+bool corRestAsyncDispatch(void)
+{
+  if (corRestAsyncPoolUp() == false)
+    return false;                                     // pool down: inline, and not counted - no choice was made
+
+  if ((corRestInlineHookF != NULL) && (corRestInlineHookF() == true))
+  {
+    atomic_fetch_add_explicit(&dispatchInline, 1, memory_order_relaxed);
+    return false;
+  }
+
+  atomic_fetch_add_explicit(&dispatchHandedOff, 1, memory_order_relaxed);
+  return true;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestDispatchCounts - how many requests ran inline, how many were handed to a worker
+//
+void corRestDispatchCounts(uint64_t* inlineP, uint64_t* handedOffP)
+{
+  *inlineP    = atomic_load_explicit(&dispatchInline,    memory_order_relaxed);
+  *handedOffP = atomic_load_explicit(&dispatchHandedOff, memory_order_relaxed);
 }
 
 void corRestAsyncEnqueue(CorRestState* stateP)

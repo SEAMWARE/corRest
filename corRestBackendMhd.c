@@ -202,13 +202,14 @@ static enum MHD_Result mhdConnectionHandler
     return MHD_YES;
   }
 
-  // --- Final call: process (off the I/O thread when the pool is up), respond ---
+  // --- Final call: process (off the I/O thread, unless the app's inline hook claims it), respond ---
   if (corRest.asyncProcessed == false)
   {
-    if (corRestAsyncPoolUp() == true)
+    if (corRestAsyncDispatch() == true)
     {
       // Suspend this connection and hand it to a worker so DB/distop latency
-      // doesn't block this epoll thread. The worker runs corRestProcessRequest
+      // doesn't block this epoll thread (a request that waits on nothing runs
+      // right here instead - see CorRestInlineHook). The worker runs corRestProcessRequest
       // and resumes us; MHD then re-invokes this handler with asyncProcessed
       // set and we fall through to build + send the response. Suspend BEFORE
       // enqueue so a worker can never resume a not-yet-suspended connection.
