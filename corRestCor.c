@@ -33,6 +33,7 @@
 #include <string.h>                                   // memcpy, memcmp, strcmp, strchr, strncmp
 #include <errno.h>                                    // errno, EINTR
 #include <unistd.h>                                   // close, read, write
+#include <time.h>                                     // clock_gettime
 #include <poll.h>                                     // poll
 #include <pthread.h>                                  // pthread_create
 #include <netdb.h>                                    // getaddrinfo
@@ -845,6 +846,18 @@ static bool requestStart(ServerConn* scP)
 
   corRestP = stateP;
   corRestStateInit(scP, pathP->value.s, verbP->value.s);
+
+  //
+  // The request's time, as each HTTP backend sets it: createdAt/modifiedAt, TRoE and notification times
+  // are all this one instant. Missing, every entity written over cor:// was created in 1970.
+  //
+  struct timespec ts;
+  struct timespec tsM;
+
+  clock_gettime(CLOCK_REALTIME,  &ts);
+  clock_gettime(CLOCK_MONOTONIC, &tsM);
+  corRest.requestStartTime     = (uint64_t) ts.tv_sec  * 1000000000ULL + (uint64_t) ts.tv_nsec;
+  corRest.requestStartTimeMono = (uint64_t) tsM.tv_sec * 1000000000ULL + (uint64_t) tsM.tv_nsec;
 
   if (corRestUserDataAllocHookF != NULL)
     corRest.userData = corRestUserDataAllocHookF();
