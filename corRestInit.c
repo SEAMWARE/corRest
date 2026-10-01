@@ -446,6 +446,14 @@ void corRestProcessRequest(void)
     if (corRest.in.requestTree != NULL)
       corRestPayloadParseHook();
   }
+  else if (corRest.in.requestTree != NULL)
+  {
+    //
+    // A body that arrived as a tree (cor://) - never text, never parsed. It gets what a parsed body
+    // gets from here on.
+    //
+    corRestPayloadParseHook();
+  }
 
   // Extract ?pretty=N (remove from param list so it doesn't hit validation)
   for (int i = 0; i < corRest.in.uriParamCount; i++)
@@ -653,9 +661,12 @@ void corRestProcessRequest(void)
     }
   }
 
-  // Render response tree to JSON
+  // Render response tree to JSON - unless the transport carries the tree itself (cor://)
   char*  responseBody     = NULL;
   int    responseBodySize = 0;
+
+  if (corRest.out.noRender == true)
+    return;
 
   if (corRest.out.responseTree != NULL)
   {
@@ -1277,7 +1288,7 @@ int corRestResponseHeaderVBuild(CorRestKeyValue* hv, int max)
   // TS 104-176 specifies bare media types throughout (§ 6.2.3, § 6.3.3,
   // § 6.4.7.2 "exactly equal to the media type"); RFC 8259 defines no charset
   // parameter for application/json — so emit the type verbatim, no charset.
-  if (corRest.out.payloadSize > 0)
+  if ((corRest.out.payloadSize > 0) || ((corRest.out.noRender == true) && (corRest.out.responseTree != NULL)))
   {
     int         code = corRest.out.httpStatusCode;
     const char* ct   = (code == 201 || (code >= 400 && code <= 599))
