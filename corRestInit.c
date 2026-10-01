@@ -426,8 +426,9 @@ void corRestProcessRequest(void)
   // application/ld+json (with or without a charset parameter): 415, body
   // empty (spec wording: "shall result in just a 415 HTTP status code
   // (without any payload body)"). Run before the JSON parse so we don't
-  // 400 InvalidRequest on a body that was never meant to be JSON.
-  if (corRest.in.payloadSize > 0 && corRest.in.contentType != NULL &&
+  // 400 InvalidRequest on a body that was never meant to be JSON. A body that arrived as a
+  // tree (cor://) came with its Content-Type too, and is held to the same rule.
+  if ((corRest.in.payloadSize > 0 || corRest.in.requestTree != NULL) && corRest.in.contentType != NULL &&
       (corRest.in.verb == CorVerbPost  ||
        corRest.in.verb == CorVerbPut   ||
        corRest.in.verb == CorVerbPatch))
