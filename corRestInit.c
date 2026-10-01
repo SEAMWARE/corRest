@@ -343,6 +343,27 @@ void corRestHttpHeaderAdd(const char* key, const char* value)
 
 // -----------------------------------------------------------------------------
 //
+// keyHookReplay - the key hook over a tree that was never parsed: members in document order,
+// at corJson's depths (the top-level container's members are at depth 1, each nested container
+// one more), each before its own value
+//
+static bool keyHookReplay(CorNode* containerP, int depth)
+{
+  for (CorNode* nodeP = containerP->value.head; nodeP != NULL; nodeP = nodeP->next)
+  {
+    if ((containerP->type == CorObject) && (corRest.corJsonP->keyF(corRest.corJsonP, containerP, nodeP, depth) == false))
+      return false;
+
+    if (((nodeP->type == CorObject) || (nodeP->type == CorArray)) && (keyHookReplay(nodeP, depth + 1) == false))
+      return false;
+  }
+
+  return true;
+}
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestProcessRequest - run the request-dispatch core on the bound corRest state
 //
 // Connection-free: consumes corRest.in (verb, url, headers, params, requestTree)
@@ -450,9 +471,23 @@ void corRestProcessRequest(void)
   {
     //
     // A body that arrived as a tree (cor://) - never text, never parsed. It gets what a parsed body
-    // gets from here on.
+    // gets: the pre-parse hook, the key hook it sets - replayed over the tree in the order and at
+    // the depths corJson would have called it - and the parse hook.
     //
-    corRestPayloadParseHook();
+    corRestPrePayloadParseHook();
+
+    bool keysOk = true;
+
+    if ((corRest.corJsonP->keyF != NULL) && ((corRest.in.requestTree->type == CorObject) || (corRest.in.requestTree->type == CorArray)))
+      keysOk = keyHookReplay(corRest.in.requestTree, 1);
+
+    corRest.corJsonP->keyF     = NULL;
+    corRest.corJsonP->keyDataP = NULL;
+
+    if (keysOk == true)
+      corRestPayloadParseHook();
+    else
+      corRest.in.requestTree = NULL;
   }
 
   // Extract ?pretty=N (remove from param list so it doesn't hit validation)
