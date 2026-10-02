@@ -15,8 +15,9 @@
 // body arrives as the tree the service routine works on, and a response leaves as the tree it built,
 // with no JSON parse or render on either side.
 //
-// v1: one TCP connection per peer and client thread, one request in flight on it. The frames carry
-// correlation ids already; multiplexing is a later step that changes no byte of the format.
+// Multiplexed (doc § 5.3): a peer's connections are the whole process's, and any number of requests
+// are in flight on each - a response is matched to its request by the frame's correlation id, and may
+// come back in any order. No byte of the format changed for it.
 //
 #include <stdbool.h>                                  // bool
 
@@ -44,6 +45,17 @@ extern void corRestCorInit(const CorBinCodec* codecP, const char** namespaceV, i
 // corRestCorListen - accept cor:// connections on a port, served by loopCount event loops; false on failure
 //
 extern bool corRestCorListen(unsigned short port, int loopCount);
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCorClientConns - how many connections the client keeps to each peer (default 1, max 16)
+//
+// The calls to a peer take its connections in turn. A peer's server reads each connection on one of
+// its event loops, so this many connections spread the requests over as many of its loops.
+//
+extern void corRestCorClientConns(int n);
 
 
 
@@ -84,5 +96,41 @@ extern bool corRestCorSend(const char*         url,
                            CorAlloc*           respAllocP,
                            CorRestCorResponse* respP,
                            const char**        errorP);
+
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCorStart / corRestCorWait - a request sent now, its response collected later
+//
+// For a fan-out: start every request, then wait for each. The requests are in flight at the same
+// time, on as many connections as corRestCorClientConns allows, and multiplexed beyond.
+//
+// corRestCorStart: the request is encoded and sent before it returns - bodyTree (or bodyText, parsed
+// into kaP) is the caller's again then. NULL only for a bad URL, a body that is not JSON, or no memory
+// (with *errorP); any other failure is reported by corRestCorWait.
+//
+// corRestCorWait: blocks until the response is in, the call fails, or its time is up; the response
+// lives in respAllocP, as corRestCorSend's does. Frees the call - every call started must be waited
+// for, once.
+//
+// Between the two, respAllocP may be used freely: the response is decoded into memory of the call's
+// own, by whichever thread reads it, and handed to respAllocP only in corRestCorWait.
+//
+typedef struct CorRestCorCall CorRestCorCall;
+
+extern CorRestCorCall* corRestCorStart(const char*       url,
+                                       CorRestVerb       verb,
+                                       const char*       pathAndQuery,
+                                       CorRestKeyValue*  headerV,
+                                       int               headerCount,
+                                       CorNode*          bodyTree,
+                                       const char*       bodyText,
+                                       int               timeoutMs,
+                                       CorAlloc*         kaP,
+                                       const char**      errorP);
+
+extern bool corRestCorWait(CorRestCorCall* callP, CorAlloc* respAllocP, CorRestCorResponse* respP, const char** errorP);
 
 #endif  // CORREST_CORRESTCOR_H_
