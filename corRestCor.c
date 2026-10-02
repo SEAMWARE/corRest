@@ -56,6 +56,7 @@
 #include "corJson/corJsonCreate.h"                    // corJsonCreate
 #include "corJson/corJsonParse.h"                     // corJsonParse
 
+#include "corRest/corRestWait.h"                     // corRestWaitFd
 #include "corRest/corRest.h"                          // corRest, corRestP
 #include "corRest/CorRestState.h"                     // CorRestState
 #include "corRest/corRestHooks.h"                     // CorRestHook, CorRestUserData*Hook
@@ -146,18 +147,7 @@ void corRestCorInit(const CorBinCodec* _codecP, const char** _namespaceV, int _n
 //
 static bool ioWait(int fd, short events, int timeoutMs)
 {
-  struct pollfd p = { fd, events, 0 };
-
-  while (true)
-  {
-    int r = poll(&p, 1, timeoutMs);
-
-    if (r > 0)
-      return true;
-    if ((r < 0) && (errno == EINTR))
-      continue;
-    return false;
-  }
+  return corRestWaitFd(fd, events, timeoutMs, NULL) > 0;
 }
 
 
