@@ -56,7 +56,8 @@
 #include "corJson/corJsonCreate.h"                    // corJsonCreate
 #include "corJson/corJsonParse.h"                     // corJsonParse
 
-#include "corRest/corRestWait.h"                     // corRestWaitFd
+#include "corRest/corRestWait.h"                     // corRestWaitFd, corRestCoWaitSet
+#include "corBase/corCo.h"                            // corCoCreate, corCoResume, corCoYield, corCoCurrent
 #include "corRest/corRest.h"                          // corRest, corRestP
 #include "corRest/CorRestState.h"                     // CorRestState
 #include "corRest/corRestHooks.h"                     // CorRestHook, CorRestUserData*Hook
@@ -123,6 +124,8 @@ typedef struct CorConn
   int           rpos;
   int           rlen;
   char          peer[160];      // host:port, for the client cache and the log - host (128) + port (16)
+  bool          busy;           // client: a request is using it - another coroutine of the thread may not
+  bool          temporary;      // client: made for one request, every slot being busy - closed after it
 } CorConn;
 
 
@@ -719,6 +722,235 @@ static void requestRespond(CorRestState* stateP, bool onLoop)
 
 
 
+// =============================================================================
+//
+// Coroutines on the loops (coraine doc/coroutines.md § 3)
+//
+// A request that can wait runs as a coroutine on the loop that read it. Where it would wait for a
+// socket - corRestWaitFd, inside a client - coWait hands the socket to the loop's epoll and yields;
+// the loop goes on serving everything else, and resumes the coroutine when the socket is ready or its
+// time is up. A wait's epoll entry carries the CoWait itself, its pointer tagged with the low bit, so
+// the loop tells it from a connection.
+//
+// =============================================================================
+
+
+
+// -----------------------------------------------------------------------------
+//
+// CoWait - a coroutine waiting for a socket, or for time (fd < 0); it lives on the coroutine's stack
+//
+typedef struct CoWait
+{
+  CorCo*          coP;
+  int             fd;
+  short           revents;
+  bool            ready;
+  long long       deadline;        // CLOCK_MONOTONIC ms; 0: no limit
+  struct CoWait*  next;            // the loop's list of waits with a deadline
+  struct CoWait*  prev;
+} CoWait;
+
+enum { CO_TAG = 1, CO_MAX = 1024 };
+
+static __thread int      coLoopFd  = -1;   // this thread's loop - set by serverLoop
+static __thread CoWait*  coTimed   = NULL; // the waits with a deadline
+static __thread int      coRunning = 0;    // this loop's coroutines alive - at CO_MAX a waiting request takes a thread
+
+static long long coNowMs(void)
+{
+  struct timespec ts;
+
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void coTimedUnlink(CoWait* wP)
+{
+  if (wP->prev != NULL)          wP->prev->next = wP->next;
+  else if (coTimed == wP)        coTimed        = wP->next;
+  if (wP->next != NULL)          wP->next->prev = wP->prev;
+  wP->next = NULL;
+  wP->prev = NULL;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coWait - corRestWaitFd inside a coroutine (corRestCoWaitSet): the loop watches, the coroutine yields
+//
+// corRestP is the coroutine's own across the yield: saved here, put back on resume - the loop and
+// every other coroutine of this thread rebind it meanwhile, and a request in an in-process forward
+// may have it pointing at the inner request.
+//
+static int coWait(int fd, short events, int timeoutMs, short* reventsP)
+{
+  if ((coLoopFd < 0) || (timeoutMs == 0))
+  {
+    struct pollfd p = { fd, events, 0 };
+    int           r = poll(&p, 1, timeoutMs);
+
+    if ((r > 0) && (reventsP != NULL))
+      *reventsP = p.revents;
+    return r;
+  }
+
+  CoWait w;
+
+  memset(&w, 0, sizeof(w));
+  w.coP = corCoCurrent();
+  w.fd  = fd;
+
+  if (fd >= 0)
+  {
+    struct epoll_event ev;
+
+    ev.events   = EPOLLONESHOT | ((events & POLLIN) ? EPOLLIN : 0) | ((events & POLLOUT) ? EPOLLOUT : 0);
+    ev.data.ptr = (void*) (((uintptr_t) &w) | CO_TAG);
+
+    //
+    // One system call per wait: a socket stays in the loop's set, disarmed (EPOLLONESHOT) between
+    // waits - MOD re-arms it; ADD only the first time. A closed socket leaves the set by itself.
+    //
+    if ((epoll_ctl(coLoopFd, EPOLL_CTL_MOD, fd, &ev) != 0) && ((errno != ENOENT) || (epoll_ctl(coLoopFd, EPOLL_CTL_ADD, fd, &ev) != 0)))
+      return -1;
+  }
+
+  if (timeoutMs > 0)
+  {
+    w.deadline = coNowMs() + timeoutMs;
+    w.next     = coTimed;
+    if (coTimed != NULL)
+      coTimed->prev = &w;
+    coTimed = &w;
+  }
+
+  CorRestState* savedP = corRestP;
+
+  corCoYield();
+  corRestP = savedP;
+
+  //
+  // Timed out: still armed, and its entry points at this CoWait, on a stack about to move on - disarm.
+  // (Ready: EPOLLONESHOT has disarmed it already.)
+  //
+  if ((fd >= 0) && (w.ready == false))
+  {
+    struct epoll_event ev = { 0 };
+    epoll_ctl(coLoopFd, EPOLL_CTL_MOD, fd, &ev);
+  }
+  if (w.deadline != 0)
+    coTimedUnlink(&w);
+
+  if (w.ready == false)
+    return 0;
+
+  if (reventsP != NULL)
+    *reventsP = w.revents;
+  return 1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coResume - continue a coroutine until it yields or ends; the loop's corRestP is nobody's after
+//
+static void coResume(CorCo* coP)
+{
+  corCoResume(coP);
+  corRestP = NULL;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coTimeoutMs - how long the loop may sleep: until the nearest deadline (-1: none)
+//
+static int coTimeoutMs(void)
+{
+  if (coTimed == NULL)
+    return -1;
+
+  long long now  = coNowMs();
+  long long next = coTimed->deadline;
+
+  for (CoWait* wP = coTimed->next; wP != NULL; wP = wP->next)
+  {
+    if (wP->deadline < next)
+      next = wP->deadline;
+  }
+
+  return (next <= now) ? 0 : (int) (next - now);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coExpire - resume every coroutine whose time is up (one at a time - a resumed one changes the list)
+//
+static void coExpire(void)
+{
+  while (true)
+  {
+    long long now = coNowMs();
+    CoWait*   wP  = coTimed;
+
+    while ((wP != NULL) && (wP->deadline > now))
+      wP = wP->next;
+
+    if (wP == NULL)
+      return;
+
+    coTimedUnlink(wP);
+    wP->deadline = 0;                                   // unlinked already
+    wP->ready    = false;
+    coResume(wP->coP);
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coReady - the loop saw a wait's socket ready: resume its coroutine
+//
+static void coReady(CoWait* wP, uint32_t events)
+{
+  if (wP->deadline != 0)
+  {
+    coTimedUnlink(wP);
+    wP->deadline = 0;
+  }
+
+  wP->ready   = true;
+  wP->revents = ((events & EPOLLIN)  ? POLLIN  : 0) | ((events & EPOLLOUT) ? POLLOUT : 0) |
+                ((events & EPOLLERR) ? POLLERR : 0) | ((events & EPOLLHUP) ? POLLHUP : 0);
+  coResume(wP->coP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// requestCoroutine - a request that can wait, run on the loop as a coroutine
+//
+static void requestCoroutine(void* arg)
+{
+  ServerConn* scP = (ServerConn*) arg;
+
+  corRestP = scP->stateP;
+  corRestProcessRequest();
+  requestRespond(scP->stateP, true);
+
+  coRunning -= 1;
+}
+
+
+
 static bool requestStart(ServerConn* scP);
 
 
@@ -884,7 +1116,9 @@ static bool requestStart(ServerConn* scP)
 
   //
   // A dedicated connection's thread runs everything itself. On a loop: inline when it cannot block,
-  // else the connection moves to a thread of its own (connDedicate), which runs this request first.
+  // else as a coroutine of the loop, which yields wherever it waits. A thread of its own for the
+  // connection (connDedicate) only when the loop has as many coroutines as it takes, or no stack is
+  // to be had.
   //
   if (scP->dedicated == true)
   {
@@ -895,8 +1129,16 @@ static bool requestStart(ServerConn* scP)
 
   if (corRestAsyncDispatch() == true)
   {
+    CorCo* coP = (coRunning < CO_MAX) ? corCoCreate(requestCoroutine, scP) : NULL;
+
     corRestP = NULL;
-    return connDedicate(scP);
+
+    if (coP == NULL)
+      return connDedicate(scP);
+
+    coRunning += 1;
+    coResume(coP);
+    return true;
   }
 
   corRestProcessRequest();
@@ -947,12 +1189,23 @@ static void* serverLoop(void* arg)
   int                loopFd = (int) (intptr_t) arg;
   struct epoll_event evV[64];
 
+  coLoopFd = loopFd;
+
   while (true)
   {
-    int n = epoll_wait(loopFd, evV, 64, -1);
+    int n = epoll_wait(loopFd, evV, 64, coTimeoutMs());
 
     for (int i = 0; i < n; i++)
     {
+      //
+      // A coroutine's socket (the tagged pointer) - or a connection
+      //
+      if ((((uintptr_t) evV[i].data.ptr) & CO_TAG) != 0)
+      {
+        coReady((CoWait*) (((uintptr_t) evV[i].data.ptr) & ~((uintptr_t) CO_TAG)), evV[i].events);
+        continue;
+      }
+
       ServerConn* scP = (ServerConn*) evV[i].data.ptr;
       bool        dead;
 
@@ -983,6 +1236,8 @@ static void* serverLoop(void* arg)
       if (ok == false)
         serverConnFree(scP);
     }
+
+    coExpire();
   }
 
   return NULL;
@@ -1083,6 +1338,8 @@ bool corRestCorListen(unsigned short port, int loopCount)
   }
 
   loops = (loopCount < 1) ? 1 : (loopCount > 16) ? 16 : loopCount;
+
+  corRestCoWaitSet(coWait);                          // a client's wait inside a coroutine: the loop's
 
   for (int i = 0; i < loops; i++)
   {
@@ -1253,14 +1510,23 @@ static CorConn* clientConnGet(const char* host, const char* port, int timeoutMs,
 
   snprintf(key, sizeof(key), "%s:%s", host, port);
 
-  CorConn* freeP = NULL;
+  //
+  // This thread's connection to host:port - one no other request is using: on a loop, several
+  // coroutines of the thread may be waiting on cor:// requests at once
+  //
+  CorConn* freeP = NULL;                             // an empty slot
+  CorConn* idleP = NULL;                             // or an idle connection to another peer, to make room
 
   for (int i = 0; i < CLIENT_CONNS_MAX; i++)
   {
     CorConn* cP = clientConnV[i];
 
+    if ((cP != NULL) && (cP->busy == true))
+      continue;
+
     if ((cP != NULL) && (cP->fd >= 0) && (strcmp(cP->peer, key) == 0))
     {
+      cP->busy = true;
       *reusedP = true;
       return cP;
     }
@@ -1276,15 +1542,61 @@ static CorConn* clientConnGet(const char* host, const char* port, int timeoutMs,
       }
       freeP = cP;
     }
+    else if ((idleP == NULL) && (cP != NULL))
+      idleP = cP;
   }
 
-  if (freeP == NULL)                                 // all in use: the first one makes room
+  if ((freeP == NULL) && (idleP != NULL))
   {
-    freeP = clientConnV[0];
+    freeP = idleP;
     connClose(freeP);
   }
 
-  return (clientConnect(freeP, host, port, timeoutMs, errorP) == true) ? freeP : NULL;
+  if (freeP == NULL)                                 // every slot busy: a connection for this request only
+  {
+    if ((freeP = calloc(1, sizeof(CorConn))) == NULL)
+    {
+      *errorP = "out of memory";
+      return NULL;
+    }
+    freeP->fd        = -1;
+    freeP->temporary = true;
+  }
+
+  //
+  // Busy BEFORE the connect: the HELLO exchange waits for the peer, and inside a coroutine that wait
+  // yields - another coroutine of this thread would otherwise find the connection already named for
+  // this peer and take it, its tables not yet opened.
+  //
+  freeP->busy = true;
+
+  if (clientConnect(freeP, host, port, timeoutMs, errorP) == false)
+  {
+    freeP->busy = false;
+    if (freeP->temporary == true)
+      free(freeP);
+    return NULL;
+  }
+
+  *reusedP = false;
+  return freeP;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// clientConnRelease - the request is done with the connection: free for the next, or gone if temporary
+//
+static void clientConnRelease(CorConn* cP)
+{
+  cP->busy = false;
+
+  if (cP->temporary == true)
+  {
+    connClose(cP);
+    free(cP);
+  }
 }
 
 
@@ -1405,6 +1717,7 @@ bool corRestCorSend(const char*         url,
       {
         *errorP = "unexpected frame in answer";
         connClose(cP);
+        clientConnRelease(cP);
         break;
       }
 
@@ -1413,8 +1726,11 @@ bool corRestCorSend(const char*         url,
       if (respTreeP == NULL)
       {
         connClose(cP);                               // the tables can no longer be trusted
+        clientConnRelease(cP);
         break;
       }
+
+      clientConnRelease(cP);                         // the response is decoded - the connection is not needed
 
       CorNode* statusP  = corTreeLookup(respTreeP, "status");
       CorNode* headersP = corTreeLookup(respTreeP, "headers");
@@ -1455,6 +1771,7 @@ bool corRestCorSend(const char*         url,
     else
     {
       connClose(cP);
+      clientConnRelease(cP);
 
       //
       // Retried ONLY on a connection that was reused and that the peer had closed - a restart since

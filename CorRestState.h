@@ -122,6 +122,12 @@ typedef struct CorRestState
   // using.
   //
   int                      shard;
+
+  //
+  // selfForwardDepth - how deep in in-process forwards this request is (corRestProcessInProcess): the
+  // request's, not the thread's - on a coroutine, another request of the same thread may be in one too
+  //
+  int                      selfForwardDepth;
 } CorRestState;
 
 
