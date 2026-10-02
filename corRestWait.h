@@ -43,4 +43,16 @@ typedef int (*CorRestCoWaitFunction)(int fd, short events, int timeoutMs, short*
 
 extern void corRestCoWaitSet(CorRestCoWaitFunction fn);
 
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCoLoopInit - this thread's epoll loop runs coroutines (corBase corCoLoop), bound to corRest
+//
+// For a server loop of corRest's (cor://, the builtin HTTP server): the loop's epoll watches what its
+// coroutines wait for, corRestWaitFd inside them is corCoLoopWait, and corRestP - the request bound to
+// the thread - is the coroutine's own across a yield and nobody's on the loop between them.
+//
+extern void corRestCoLoopInit(int epollFd);
+
 #endif  // CORREST_CORRESTWAIT_H_
