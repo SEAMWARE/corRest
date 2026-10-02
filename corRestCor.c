@@ -32,6 +32,7 @@
 #include <stdlib.h>                                   // malloc, free
 #include <string.h>                                   // memcpy, memcmp, strcmp, strchr, strncmp
 #include <errno.h>                                    // errno, EINTR
+#include <stdatomic.h>                                // atomic_fetch_add, atomic_exchange
 #include <unistd.h>                                   // close, read, write
 #include <time.h>                                     // clock_gettime
 #include <poll.h>                                     // poll
@@ -126,8 +127,6 @@ typedef struct CorConn
   int           rpos;
   int           rlen;
   char          peer[160];      // host:port, for the client cache and the log - host (128) + port (16)
-  bool          busy;           // client: a request is using it - another coroutine of the thread may not
-  bool          temporary;      // client: made for one request, every slot being busy - closed after it
 } CorConn;
 
 
@@ -456,8 +455,8 @@ static const char* helloCheck(CorNode* helloP, int* namespacesP)
 // two thread wakeups each. A post-response phase that may block still goes to the worker pool
 // (CorRestState.finishF), as HTTP's does.
 //
-// A connection is armed EPOLLONESHOT: once a request is in, it is not read again until its response
-// is out and its post-response phase done - v1's one request in flight per connection.
+// A connection is armed once, for good, and multiplexed: any number of requests in flight on it,
+// answered in the order they finish (ServerConn).
 //
 // =============================================================================
 
@@ -467,52 +466,209 @@ static const char* helloCheck(CorNode* helloP, int* namespacesP)
 //
 // ServerConn - a CorConn, plus what a server needs to assemble frames off a non-blocking socket
 //
+// Multiplexed (doc/coroutines.md § 6, step 5): the connection is armed once, for good, and the loop
+// reads every frame that comes - a request in, its state of its own (ServerReq), and on to the next;
+// they run at once (inline, or as coroutines of the loop) and their responses go out in the order
+// they finish. Every request's frame is DECODED when it arrives, and every response ENCODED when it
+// is queued - both on the loop's thread, in wire order, which is what keeps the two ends' string
+// tables in step.
+//
+// Lifetime: a reference for the loop (dropped when the connection dies) and one per request in
+// flight - a request may finish on a worker - whoever lets go last frees it.
+//
+typedef struct ServerReq ServerReq;
+
 typedef struct ServerConn
 {
-  CorConn        conn;
-  int            loopFd;           // the epoll instance the connection belongs to
-  bool           helloDone;
-  uint8_t        hdr[FRAME_HEADER_LEN];
-  int            hdrHave;
-  char*          body;             // the current frame's tree - the request's tree points into it
-  uint32_t       bodyLen;
-  uint32_t       bodyHave;
-  uint32_t       correlation;
-  CorAlloc       ka;               // the decoded request lives here - reset when the request is over
-  char           kaBuf[16 * 1024];
-  CorRestState*  stateP;           // the request in flight, NULL between requests
-  bool           dedicated;        // moved off the loops to a thread of its own (connDedicate)
+  CorConn            conn;
+  int                loopFd;           // the epoll instance the connection belongs to
+  bool               helloDone;
+  uint8_t            hdr[FRAME_HEADER_LEN];
+  int                hdrHave;
+  char*              body;             // the frame being assembled
+  uint32_t           bodyLen;
+  uint32_t           bodyHave;
+  uint32_t           correlation;
+  CorAlloc           ka;               // the HELLO's
+  char               kaBuf[2048];
+  bool               dedicated;        // moved off the loops to a thread of its own (connDedicate)
+  ServerReq*         firstReqP;        // ... and the request that moved it there
+  bool               dead;             // the socket is closed (the loop's reference dropped)
+  _Atomic int        refs;
+  int                pending;          // requests started whose response is not queued yet (the loop's thread)
+  CorBinBuffer       outQ;             // responses not yet written - the loop flushes it on EPOLLOUT
+  int                outPos;
+  bool               outWatch;         // EPOLLOUT armed
+  _Atomic(ServerReq*) spare;           // one finished request's memory, for the next
 } ServerConn;
 
 
 
 // -----------------------------------------------------------------------------
 //
-// connArm - read the next frame when it comes
+// ServerReq - one request in flight: its frame, the memory its decoded tree lives in, its state
 //
-static void connArm(ServerConn* scP)
+struct ServerReq
+{
+  ServerConn*    scP;
+  uint32_t       correlation;
+  char*          body;             // the request's tree points into it
+  uint32_t       bodyLen;
+  CorRestState*  stateP;
+  CorAlloc       ka;
+  char           kaBuf[16 * 1024];
+};
+
+
+
+// -----------------------------------------------------------------------------
+//
+// connWatch - what the loop waits for on the connection: input always, output while the queue is not empty
+//
+static void connWatch(ServerConn* scP, bool output)
 {
   struct epoll_event ev;
 
-  ev.events   = EPOLLIN | EPOLLONESHOT | EPOLLRDHUP;
+  ev.events   = EPOLLIN | EPOLLRDHUP | (output ? EPOLLOUT : 0);
   ev.data.ptr = scP;
 
   epoll_ctl(scP->loopFd, EPOLL_CTL_MOD, scP->conn.fd, &ev);
+  scP->outWatch = output;
 }
 
 
 
 // -----------------------------------------------------------------------------
 //
-// serverConnFree - the peer is gone, or spoke nonsense
+// connUnref - one reference fewer; the last frees the connection
 //
-static void serverConnFree(ServerConn* scP)
+static void connUnref(ServerConn* scP)
 {
-  epoll_ctl(scP->loopFd, EPOLL_CTL_DEL, scP->conn.fd, NULL);
+  if (atomic_fetch_sub(&scP->refs, 1) != 1)
+    return;
+
   connClose(&scP->conn);
   free(scP->body);
+  free(scP->outQ.buf);
   corAllocBufferReset(&scP->ka, false);
+
+  ServerReq* spareP = atomic_exchange(&scP->spare, NULL);
+  if (spareP != NULL)
+  {
+    corAllocBufferReset(&spareP->ka, false);
+    free(spareP);
+  }
+
   free(scP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// connDie - the peer is gone, or spoke nonsense: the socket closed, the loop's reference dropped
+//
+// The requests still running keep the connection; their responses go nowhere.
+//
+static void connDie(ServerConn* scP)
+{
+  if (scP->dead == true)
+    return;
+
+  scP->dead = true;
+  epoll_ctl(scP->loopFd, EPOLL_CTL_DEL, scP->conn.fd, NULL);
+  connClose(&scP->conn);
+  connUnref(scP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// outFlush - write what the queue holds, as far as the socket takes it; the rest on EPOLLOUT
+//
+static void outFlush(ServerConn* scP)
+{
+  while (scP->outPos < scP->outQ.len)
+  {
+    ssize_t w = send(scP->conn.fd, &scP->outQ.buf[scP->outPos], scP->outQ.len - scP->outPos, MSG_NOSIGNAL);
+
+    if (w > 0)
+    {
+      scP->outPos += (int) w;
+      continue;
+    }
+
+    if ((w < 0) && (errno == EINTR))
+      continue;
+
+    if ((w < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))
+    {
+      if (scP->outWatch == false)
+        connWatch(scP, true);
+      return;
+    }
+
+    COR_W("cor:// %s: the response could not be sent - closing", scP->conn.peer);
+    connDie(scP);
+    return;
+  }
+
+  scP->outPos     = 0;
+  scP->outQ.len   = 0;
+
+  if (scP->outWatch == true)
+    connWatch(scP, false);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// frameQueue - a frame, encoded at the end of the queue with the connection's tables, and flushed
+//
+// On the loop's thread only: the encoding order is the wire order.
+//
+static bool frameQueue(ServerConn* scP, uint8_t type, uint32_t correlation, CorNode* treeP)
+{
+  if (scP->dead == true)
+    return false;
+
+  CorBinBuffer* qP    = &scP->outQ;
+  int           start = qP->len;
+
+  if (qP->size - qP->len < FRAME_HEADER_LEN)
+  {
+    int   size = (qP->size == 0) ? 16384 : qP->size * 2;
+    char* buf  = realloc(qP->buf, size);
+
+    if (buf == NULL)
+      return false;
+    qP->buf  = buf;
+    qP->size = size;
+  }
+
+  qP->len += FRAME_HEADER_LEN;
+
+  if (corTreeBinEncode(treeP, codecP, &scP->conn.out, qP) == false)
+  {
+    qP->len = start;
+    return false;
+  }
+
+  uint32_t bodyLen = qP->len - start - FRAME_HEADER_LEN;
+  char*    h       = &qP->buf[start];
+
+  memset(h, 0, FRAME_HEADER_LEN);
+  memcpy(h, frameMagic, 4);
+  h[4] = type;
+  memcpy(&h[8],  &correlation, 4);
+  memcpy(&h[12], &bodyLen,     4);
+
+  if (scP->outWatch == false)                        // a flush already waiting for EPOLLOUT sends this too
+    outFlush(scP);
+
+  return true;
 }
 
 
@@ -631,29 +787,78 @@ static bool frameAssemble(ServerConn* scP, bool* deadP)
 
 // -----------------------------------------------------------------------------
 //
-// frameDone - the frame's bytes are no longer needed: ready for the next header
+// frameTake - the frame just assembled is the caller's: its body, and the assembly reset for the next
 //
-static void frameDone(ServerConn* scP)
+static char* frameTake(ServerConn* scP, uint32_t* lenP, uint32_t* correlationP)
 {
-  free(scP->body);
+  char* body = scP->body;
+
+  *lenP         = scP->bodyLen;
+  *correlationP = scP->correlation;
+
   scP->body     = NULL;
   scP->hdrHave  = 0;
   scP->bodyLen  = 0;
   scP->bodyHave = 0;
+
+  return body;
 }
 
 
 
 // -----------------------------------------------------------------------------
 //
-// requestFinish - the post-response phase, the request's release, and the connection armed again
+// reqGet / reqRelease - a request's memory: the connection's spare, or a new one
+//
+static ServerReq* reqGet(ServerConn* scP)
+{
+  ServerReq* reqP = atomic_exchange(&scP->spare, NULL);
+
+  if (reqP == NULL)
+  {
+    if ((reqP = malloc(sizeof(ServerReq))) == NULL)
+      return NULL;
+    corAllocBufferInit(&reqP->ka, reqP->kaBuf, sizeof(reqP->kaBuf), 64 * 1024, NULL, "cor:// request");
+  }
+
+  reqP->scP    = scP;
+  reqP->stateP = NULL;
+  reqP->body   = NULL;
+
+  atomic_fetch_add(&scP->refs, 1);
+  return reqP;
+}
+
+static void reqRelease(ServerReq* reqP)
+{
+  ServerConn* scP      = reqP->scP;
+  ServerReq*  expected = NULL;
+
+  free(reqP->body);
+  reqP->body = NULL;
+  corAllocBufferReset(&reqP->ka, true);
+
+  if (atomic_compare_exchange_strong(&scP->spare, &expected, reqP) == false)
+  {
+    corAllocBufferReset(&reqP->ka, false);
+    free(reqP);
+  }
+
+  connUnref(scP);                                    // after the spare: the last reference frees it too
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// requestFinish - the post-response phase, and the request's release
 //
 // Runs where the response was sent, or - when the post-response phase may block and that was the
-// loop - on a worker (CorRestState.finishF), bound to the request's state.
+// loop - on a worker (CorRestState.finishF) or as a coroutine, bound to the request's state.
 //
 static void requestFinish(CorRestState* stateP)
 {
-  ServerConn* scP = (ServerConn*) stateP->connection;
+  ServerReq* reqP = (ServerReq*) stateP->connection;
 
   corRestP = stateP;
   corRestPostResponseHook();
@@ -663,12 +868,7 @@ static void requestFinish(CorRestState* stateP)
   free(stateP);
   corRestP = NULL;
 
-  scP->stateP = NULL;
-  frameDone(scP);                                    // the request's tree pointed into it
-  corAllocBufferReset(&scP->ka, true);
-
-  if (scP->dedicated == false)
-    connArm(scP);
+  reqRelease(reqP);
 }
 
 
@@ -677,14 +877,16 @@ static void requestFinish(CorRestState* stateP)
 //
 // requestRespond - the response, as the tree the service routine built; then the finish
 //
-// onLoop: called on the event loop (an inline request). Then the post-response phase runs here only
-// when the application's finish-inline hook allows it, like HTTP's; otherwise it goes to a worker.
+// onLoop: called on the event loop (inline, or a coroutine of it) - the response is queued there. Else
+// a dedicated connection's thread, which writes it itself. The post-response phase then runs here only
+// when the application's finish-inline hook allows it, like HTTP's; else as a coroutine, or on a worker.
 //
 static bool finishCoroutineStart(CorRestState* stateP);
 
 static void requestRespond(CorRestState* stateP, bool onLoop)
 {
-  ServerConn* scP = (ServerConn*) stateP->connection;
+  ServerReq*  reqP = (ServerReq*) stateP->connection;
+  ServerConn* scP  = reqP->scP;
 
   corRestP = stateP;
 
@@ -710,8 +912,17 @@ static void requestRespond(CorRestState* stateP, bool onLoop)
   else if ((corRest.out.payload != NULL) && (corRest.out.payloadSize > 0))
     corTreeChildAdd(responseP, corTreeString(corRest.kallocP, "text", corRest.out.payload));
 
-  if (frameSend(&scP->conn, FRAME_RESPONSE, scP->correlation, responseP, 30000) == false)
-    COR_W("cor:// %s: the response could not be sent", scP->conn.peer);
+  if (scP->dedicated == true)
+  {
+    if (frameSend(&scP->conn, FRAME_RESPONSE, reqP->correlation, responseP, 30000) == false)
+      COR_W("cor:// %s: the response could not be sent", scP->conn.peer);
+  }
+  else
+  {
+    if ((frameQueue(scP, FRAME_RESPONSE, reqP->correlation, responseP) == false) && (scP->dead == false))
+      COR_W("cor:// %s: the response could not be encoded", scP->conn.peer);
+    scP->pending -= 1;
+  }
 
   if ((onLoop == false) || ((corRestFinishInlineHookF != NULL) && (corRestFinishInlineHookF() == true)))
   {
@@ -720,8 +931,7 @@ static void requestRespond(CorRestState* stateP, bool onLoop)
   }
 
   //
-  // A phase that can wait, as a coroutine: in the request's own if it is one (the connection is armed
-  // again when the phase is done, as after a worker's), or in one of its own
+  // A phase that can wait, as a coroutine: in the request's own if it is one, or in one of its own
   //
   if (corRestFinishCoroutineAllowed() == true)
   {
@@ -765,11 +975,11 @@ static __thread int coRunning = 0;                   // this loop's coroutines a
 //
 static void requestCoroutine(void* arg)
 {
-  ServerConn* scP = (ServerConn*) arg;
+  ServerReq* reqP = (ServerReq*) arg;
 
-  corRestP = scP->stateP;
+  corRestP = reqP->stateP;
   corRestProcessRequest();
-  requestRespond(scP->stateP, true);
+  requestRespond(reqP->stateP, true);
 
   coRunning -= 1;
 }
@@ -801,7 +1011,7 @@ static bool finishCoroutineStart(CorRestState* stateP)
 
 
 
-static bool requestStart(ServerConn* scP);
+static bool requestStart(ServerConn* scP, char* body, uint32_t bodyLen, uint32_t correlation);
 
 
 
@@ -809,16 +1019,18 @@ static bool requestStart(ServerConn* scP);
 //
 // dedicatedThread - a connection of its own: the request that moved it here, then every later one
 //
-// A blocking socket and a blocking read for the next request, as cor:// v1 served every connection.
-// The connection's buffered bytes are already in scP->conn.rbuf, so nothing that arrived is lost.
+// A blocking socket and a blocking read for the next request, as cor:// v1 served every connection,
+// one request at a time. The connection's buffered bytes are already in scP->conn.rbuf, so nothing
+// that arrived is lost.
 //
 static void* dedicatedThread(void* arg)
 {
-  ServerConn* scP = (ServerConn*) arg;
+  ServerConn* scP  = (ServerConn*) arg;
+  ServerReq*  reqP = scP->firstReqP;
 
-  corRestP = scP->stateP;
+  corRestP = reqP->stateP;
   corRestProcessRequest();
-  requestRespond(scP->stateP, false);
+  requestRespond(reqP->stateP, false);
 
   while (true)
   {
@@ -826,8 +1038,9 @@ static void* dedicatedThread(void* arg)
     const char* error;
     char*       buf;
     int         len;
+    uint32_t    correlation;
 
-    if (frameRecv(&scP->conn, &type, &scP->correlation, &buf, &len, NULL, -1, &error) == false)
+    if (frameRecv(&scP->conn, &type, &correlation, &buf, &len, NULL, -1, &error) == false)
       break;
 
     if (type != FRAME_REQUEST)
@@ -837,19 +1050,12 @@ static void* dedicatedThread(void* arg)
       break;
     }
 
-    scP->body     = buf;
-    scP->bodyLen  = len;
-    scP->bodyHave = len;
-    scP->hdrHave  = FRAME_HEADER_LEN;
-
-    if (requestStart(scP) == false)
+    if (requestStart(scP, buf, (uint32_t) len, correlation) == false)
       break;
   }
 
   connClose(&scP->conn);
-  free(scP->body);
-  corAllocBufferReset(&scP->ka, false);
-  free(scP);
+  connUnref(scP);                                    // the loop's reference, the thread's now
   return NULL;
 }
 
@@ -859,17 +1065,17 @@ static void* dedicatedThread(void* arg)
 //
 // connDedicate - off the loops, for good: a thread of its own for this connection
 //
-// A request that cannot run on a loop (a forward, waiting on its peer) would otherwise cost a hop to
-// the worker pool and back - two thread wakeups - on EVERY request. The connections that send such
-// requests are other brokers' forwarding connections: few, long-lived, and nothing but blocking
-// requests. They are served best as cor:// v1 served everything, a thread each; the many short client
-// connections stay on the loops.
+// A request that cannot run on a loop - no coroutine to be had (the application's hook says no: a
+// database driver that blocks; or the loop is at its cap) - would otherwise stop the loop. Only a
+// connection with nothing else in flight can move: its other requests' responses are the loop's to
+// write.
 //
-static bool connDedicate(ServerConn* scP)
+static bool connDedicate(ServerConn* scP, ServerReq* reqP)
 {
   epoll_ctl(scP->loopFd, EPOLL_CTL_DEL, scP->conn.fd, NULL);
   fcntl(scP->conn.fd, F_SETFL, fcntl(scP->conn.fd, F_GETFL, 0) & ~O_NONBLOCK);
   scP->dedicated = true;
+  scP->firstReqP = reqP;
 
   pthread_t      tid;
   pthread_attr_t attr;
@@ -889,36 +1095,44 @@ static bool connDedicate(ServerConn* scP)
 // requestStart - a request frame is in: its state, and then the loop or the connection's own thread
 //
 // The same sequence as corRestProcessInProcess - a fresh state, the userData hook, URI params,
-// headers - except that the body is a tree already, and the response is not rendered.
+// headers - except that the body is a tree already, and the response is not rendered. Takes body.
 //
-static bool requestStart(ServerConn* scP)
+static bool requestStart(ServerConn* scP, char* body, uint32_t bodyLen, uint32_t correlation)
 {
+  ServerReq* reqP = reqGet(scP);
+
+  if (reqP == NULL)
+  {
+    free(body);
+    return false;
+  }
+
+  reqP->body        = body;
+  reqP->bodyLen     = bodyLen;
+  reqP->correlation = correlation;
+
   const char* error;
-  CorNode*    requestP = corTreeBinDecode(scP->body, scP->bodyLen, codecP, &scP->conn.in, &scP->ka, &error);
+  CorNode*    requestP = corTreeBinDecode(reqP->body, reqP->bodyLen, codecP, &scP->conn.in, &reqP->ka, &error);
+  CorNode*    verbP    = (requestP != NULL) ? corTreeLookup(requestP, "verb")    : NULL;
+  CorNode*    pathP    = (requestP != NULL) ? corTreeLookup(requestP, "path")    : NULL;
+  CorNode*    headersP = (requestP != NULL) ? corTreeLookup(requestP, "headers") : NULL;
+  CorNode*    bodyP    = (requestP != NULL) ? corTreeLookup(requestP, "body")    : NULL;
 
   if (requestP == NULL)
-  {
     COR_W("cor:// %s: undecodable request (%s) - closing", scP->conn.peer, error);
-    return false;
-  }
-
-  CorNode* verbP    = corTreeLookup(requestP, "verb");
-  CorNode* pathP    = corTreeLookup(requestP, "path");
-  CorNode* headersP = corTreeLookup(requestP, "headers");
-  CorNode* bodyP    = corTreeLookup(requestP, "body");
-
-  if ((verbP == NULL) || (verbP->type != CorString) || (pathP == NULL) || (pathP->type != CorString))
-  {
+  else if ((verbP == NULL) || (verbP->type != CorString) || (pathP == NULL) || (pathP->type != CorString))
     COR_W("cor:// %s: a request without verb or path - closing", scP->conn.peer);
+
+  CorRestState* stateP = ((verbP != NULL) && (verbP->type == CorString) && (pathP != NULL) && (pathP->type == CorString)) ? (CorRestState*) malloc(sizeof(CorRestState)) : NULL;
+
+  if (stateP == NULL)
+  {
+    reqRelease(reqP);
     return false;
   }
-
-  CorRestState* stateP = (CorRestState*) malloc(sizeof(CorRestState));
-  if (stateP == NULL)
-    return false;
 
   corRestP = stateP;
-  corRestStateInit(scP, pathP->value.s, verbP->value.s);
+  corRestStateInit(reqP, pathP->value.s, verbP->value.s);
 
   //
   // The request's time, as each HTTP backend sets it: createdAt/modifiedAt, TRoE and notification times
@@ -962,13 +1176,13 @@ static bool requestStart(ServerConn* scP)
 
   corRest.out.noRender = true;
   stateP->shard        = 0;
-  scP->stateP          = stateP;
+  reqP->stateP         = stateP;
 
   //
   // A dedicated connection's thread runs everything itself. On a loop: inline when it cannot block,
-  // else as a coroutine of the loop, which yields wherever it waits. A thread of its own for the
-  // connection (connDedicate) only when the loop has as many coroutines as it takes, or no stack is
-  // to be had.
+  // else as a coroutine of the loop, which yields wherever it waits. Without a coroutine (the
+  // application said no, or the loop is at its cap): a thread of its own for the connection - when
+  // nothing else of it is in flight; else this one runs right here, on the loop.
   //
   if (scP->dedicated == true)
   {
@@ -977,18 +1191,28 @@ static bool requestStart(ServerConn* scP)
     return true;
   }
 
+  scP->pending += 1;
+
   if (corRestAsyncDispatch() == true)
   {
-    CorCo* coP = ((coRunning < CO_MAX) && (corRestCoroutineAllowed() == true)) ? corCoCreate(requestCoroutine, scP) : NULL;
+    CorCo* coP = ((coRunning < CO_MAX) && (corRestCoroutineAllowed() == true)) ? corCoCreate(requestCoroutine, reqP) : NULL;
 
     corRestP = NULL;
 
-    if (coP == NULL)
-      return connDedicate(scP);
+    if (coP != NULL)
+    {
+      coRunning += 1;
+      corCoLoopResume(coP);
+      return true;
+    }
 
-    coRunning += 1;
-    corCoLoopResume(coP);
-    return true;
+    if ((scP->pending == 1) && (scP->outQ.len == 0))
+    {
+      scP->pending = 0;
+      return connDedicate(scP, reqP);
+    }
+
+    corRestP = stateP;
   }
 
   corRestProcessRequest();
@@ -1015,10 +1239,16 @@ static bool helloAnswer(ServerConn* scP)
     return false;
   }
 
+  //
+  // HELLO_ACK encoded without tables, as HELLO - the connection's tables are opened after it
+  //
   bool ok = (frameSend(&scP->conn, FRAME_HELLO_ACK, scP->correlation, helloTree(&scP->ka), 10000) == true) &&
             (tablesOpen(&scP->conn, peerNamespaces) == true);
 
-  frameDone(scP);
+  uint32_t len;
+  uint32_t correlation;
+
+  free(frameTake(scP, &len, &correlation));
   corAllocBufferReset(&scP->ka, true);
   scP->helloDone = true;
 
@@ -1026,6 +1256,41 @@ static bool helloAnswer(ServerConn* scP)
     COR_V("cor:// %s: connected", scP->conn.peer);
 
   return ok;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// connInput - read every frame there is, and start each
+//
+static void connInput(ServerConn* scP)
+{
+  while ((scP->dead == false) && (scP->dedicated == false))
+  {
+    bool dead;
+
+    if (frameAssemble(scP, &dead) == false)
+    {
+      if (dead == true)
+        connDie(scP);
+      return;
+    }
+
+    if (scP->helloDone == false)
+    {
+      if (helloAnswer(scP) == false)
+        connDie(scP);
+      continue;
+    }
+
+    uint32_t len;
+    uint32_t correlation;
+    char*    body = frameTake(scP, &len, &correlation);
+
+    if (requestStart(scP, body, len, correlation) == false)
+      connDie(scP);
+  }
 }
 
 
@@ -1053,35 +1318,22 @@ static void* serverLoop(void* arg)
       if (corCoLoopEvent(evV[i].data.ptr, evV[i].events) == true)
         continue;
 
-      ServerConn* scP = (ServerConn*) evV[i].data.ptr;
-      bool        dead;
-
-      if (frameAssemble(scP, &dead) == false)
-      {
-        if (dead == true)
-          serverConnFree(scP);
-        else
-          connArm(scP);                              // not all of it yet
-        continue;
-      }
+      ServerConn* scP    = (ServerConn*) evV[i].data.ptr;
+      uint32_t    events = evV[i].events;
 
       //
-      // Who arms the connection again: after HELLO, this loop; after a request, requestFinish -
-      // here when the request ran inline, on a worker when it did not
+      // Held across the handling: a request finishing inside it (inline) must not free the connection
+      // under the loop's feet
       //
-      bool ok;
+      atomic_fetch_add(&scP->refs, 1);
 
-      if (scP->helloDone == false)
-      {
-        ok = helloAnswer(scP);
-        if (ok == true)
-          connArm(scP);
-      }
-      else
-        ok = requestStart(scP);
+      if ((events & EPOLLOUT) && (scP->dead == false))
+        outFlush(scP);
 
-      if (ok == false)
-        serverConnFree(scP);
+      if ((events & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) && (scP->dead == false))
+        connInput(scP);
+
+      connUnref(scP);
     }
 
     corCoLoopExpire();
@@ -1134,13 +1386,15 @@ static void* listener(void* arg)
     scP->conn.fd = fd;
     scP->loopFd  = loopFdV[nextLoop];
     nextLoop     = (nextLoop + 1) % loops;
-    corAllocBufferInit(&scP->ka, scP->kaBuf, sizeof(scP->kaBuf), 64 * 1024, NULL, "cor:// connection");
+    corAllocBufferInit(&scP->ka, scP->kaBuf, sizeof(scP->kaBuf), 4096, NULL, "cor:// connection");
+    atomic_init(&scP->refs, 1);                      // the loop's
+    atomic_init(&scP->spare, NULL);
 
     if (getnameinfo((struct sockaddr*) &peer, peerLen, host, sizeof(host), port, sizeof(port), NI_NUMERICHOST | NI_NUMERICSERV) == 0)
       snprintf(scP->conn.peer, sizeof(scP->conn.peer), "%s:%s", host, port);
 
     struct epoll_event ev;
-    ev.events   = EPOLLIN | EPOLLONESHOT | EPOLLRDHUP;
+    ev.events   = EPOLLIN | EPOLLRDHUP;              // armed once, for good - the loop reads every frame that comes
     ev.data.ptr = scP;
 
     if (epoll_ctl(scP->loopFd, EPOLL_CTL_ADD, fd, &ev) != 0)
@@ -1223,16 +1477,77 @@ bool corRestCorListen(unsigned short port, int loopCount)
 
 // -----------------------------------------------------------------------------
 //
-// The client's connections - per thread: a forward never shares a connection with another thread's,
-// so v1 needs no multiplexing and no lock
+// The client's connections - per thread, and MULTIPLEXED (doc/coroutines.md § 6, step 5)
+//
+// One connection a peer, shared by every request of the thread: the coroutines of a loop each send
+// theirs and wait - any number in flight - and the responses come back in the order the peer finishes
+// them, matched by correlation. Nothing is shared between threads, so nothing is locked; inside the
+// thread two things are taken in turn:
+//
+//   the WRITE turn - a frame is encoded and written whole by one coroutine at a time: the encoding
+//                    adds to the connection's string tables, so encoding order must be wire order,
+//                    and a write that yields on a full socket must not be interleaved with another
+//   the READ turn  - one coroutine reads the connection, the first that waits and finds no reader;
+//                    it decodes every frame as it comes - wire order again, for the tables - into the
+//                    memory of the call it belongs to, and wakes that call's coroutine. When its own
+//                    response is in, it hands the turn on to another waiting call
+//
+// A response nobody waits for any more (its call timed out) is still decoded - the tables need it -
+// and then dropped. A thread that is not a loop's (a worker) has one flow only: the same code, never
+// a turn to wait for.
 //
 enum { CLIENT_CONNS_MAX = 8 };
+
+typedef struct Waiter                                // a coroutine waiting for the write turn
+{
+  void*           park;
+  struct Waiter*  next;
+} Waiter;
+
+typedef struct MuxConn
+{
+  CorConn                 conn;                      // conn.fd < 0: not connected
+  struct CorRestCorCall*  calls;                     // sent, response not yet in
+  bool                    writing;                   // the write turn is taken (also: connecting)
+  bool                    reading;                   // the read turn is taken (also: connecting)
+  Waiter*                 writers;
+  bool                    temporary;                 // made for one call - closed and freed after it
+} MuxConn;
+
+struct CorRestCorCall
+{
+  MuxConn*                mP;
+  uint32_t                correlation;
+  CorAlloc*               respAllocP;                // the response is decoded into it
+  long long               deadline;                  // CLOCK_MONOTONIC ms
+  bool                    reused;                    // sent on a connection opened before it
+  bool                    done;
+  const char*             error;                     // done, and failed
+  CorNode*                respTreeP;
+  long long               receivedMs;
+  void*                   park;                      // its coroutine, parked in corRestCorWait
+  struct CorRestCorCall*  next;
+};
 
 //
 // Pointers, allocated on first use: a connection carries a 16 KB read buffer, and every broker
 // thread would otherwise pay for eight of them in thread-local storage, cor:// or not
 //
-static __thread CorConn* clientConnV[CLIENT_CONNS_MAX];
+static __thread MuxConn* clientConnV[CLIENT_CONNS_MAX];
+
+
+
+// -----------------------------------------------------------------------------
+//
+// nowMs - CLOCK_MONOTONIC
+//
+static long long nowMs(void)
+{
+  struct timespec ts;
+
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long long) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 
 
@@ -1325,7 +1640,9 @@ static bool clientConnect(CorConn* cP, const char* host, const char* port, int t
 
   setsockopt(cP->fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
   setsockopt(cP->fd, SOL_SOCKET,  SO_SNDTIMEO, &tv,  sizeof(tv));
-  snprintf(cP->peer, sizeof(cP->peer), "%s:%s", host, port);
+  cP->rpos        = 0;
+  cP->rlen        = 0;
+  cP->correlation = 0;
 
   //
   // HELLO
@@ -1365,101 +1682,223 @@ static bool clientConnect(CorConn* cP, const char* host, const char* port, int t
 
 // -----------------------------------------------------------------------------
 //
-// clientConnGet - this thread's connection to host:port, opened if there is none
+// callUnlink - the call is no longer waited for on its connection
 //
-static CorConn* clientConnGet(const char* host, const char* port, int timeoutMs, bool* reusedP, const char** errorP)
+static void callUnlink(CorRestCorCall* callP)
 {
-  char key[160];
+  MuxConn* mP = callP->mP;
 
-  snprintf(key, sizeof(key), "%s:%s", host, port);
-
-  //
-  // This thread's connection to host:port - one no other request is using: on a loop, several
-  // coroutines of the thread may be waiting on cor:// requests at once
-  //
-  CorConn* freeP = NULL;                             // an empty slot
-  CorConn* idleP = NULL;                             // or an idle connection to another peer, to make room
-
-  for (int i = 0; i < CLIENT_CONNS_MAX; i++)
+  for (CorRestCorCall** pP = &mP->calls; *pP != NULL; pP = &(*pP)->next)
   {
-    CorConn* cP = clientConnV[i];
-
-    if ((cP != NULL) && (cP->busy == true))
-      continue;
-
-    if ((cP != NULL) && (cP->fd >= 0) && (strcmp(cP->peer, key) == 0))
+    if (*pP == callP)
     {
-      cP->busy = true;
-      *reusedP = true;
-      return cP;
+      *pP = callP->next;
+      break;
     }
-
-    if ((freeP == NULL) && ((cP == NULL) || (cP->fd < 0)))
-    {
-      if (cP == NULL)
-      {
-        if ((cP = calloc(1, sizeof(CorConn))) == NULL)
-          continue;
-        cP->fd         = -1;
-        clientConnV[i] = cP;
-      }
-      freeP = cP;
-    }
-    else if ((idleP == NULL) && (cP != NULL))
-      idleP = cP;
   }
-
-  if ((freeP == NULL) && (idleP != NULL))
-  {
-    freeP = idleP;
-    connClose(freeP);
-  }
-
-  if (freeP == NULL)                                 // every slot busy: a connection for this request only
-  {
-    if ((freeP = calloc(1, sizeof(CorConn))) == NULL)
-    {
-      *errorP = "out of memory";
-      return NULL;
-    }
-    freeP->fd        = -1;
-    freeP->temporary = true;
-  }
-
-  //
-  // Busy BEFORE the connect: the HELLO exchange waits for the peer, and inside a coroutine that wait
-  // yields - another coroutine of this thread would otherwise find the connection already named for
-  // this peer and take it, its tables not yet opened.
-  //
-  freeP->busy = true;
-
-  if (clientConnect(freeP, host, port, timeoutMs, errorP) == false)
-  {
-    freeP->busy = false;
-    if (freeP->temporary == true)
-      free(freeP);
-    return NULL;
-  }
-
-  *reusedP = false;
-  return freeP;
+  callP->next = NULL;
 }
 
 
 
 // -----------------------------------------------------------------------------
 //
-// clientConnRelease - the request is done with the connection: free for the next, or gone if temporary
+// callDone - a call's response is in (or its connection failed): woken, if its coroutine waits
 //
-static void clientConnRelease(CorConn* cP)
+static void callDone(CorRestCorCall* callP, CorNode* treeP, const char* error)
 {
-  cP->busy = false;
+  callUnlink(callP);
+  callP->done       = true;
+  callP->respTreeP  = treeP;
+  callP->receivedMs = nowMs();
+  callP->error     = error;
 
-  if (cP->temporary == true)
+  if (callP->park != NULL)
+    corCoLoopWake(callP->park);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// muxFail - the connection is broken: every call on it fails, and it is closed
+//
+static void muxFail(MuxConn* mP, const char* error)
+{
+  connClose(&mP->conn);
+
+  while (mP->calls != NULL)
+    callDone(mP->calls, NULL, error);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// writeTurn / writeTurnRelease - one frame (or the connect) at a time on a connection
+//
+static bool writeTurn(MuxConn* mP)
+{
+  while (mP->writing == true)
   {
-    connClose(cP);
-    free(cP);
+    if (corCoCurrent() == NULL)                      // not a coroutine: nothing to wait with (never on a worker's thread)
+      return false;
+
+    Waiter w = { NULL, NULL };
+    Waiter** tailPP = &mP->writers;
+
+    while (*tailPP != NULL)
+      tailPP = &(*tailPP)->next;
+    *tailPP = &w;
+
+    CorRestState* savedP = corRestP;
+    corCoLoopPark(&w.park, -1);
+    corRestP = savedP;
   }
+
+  mP->writing = true;
+  return true;
+}
+
+static void writeTurnRelease(MuxConn* mP)
+{
+  mP->writing = false;
+
+  Waiter* wP = mP->writers;
+
+  if (wP != NULL)
+  {
+    mP->writers = wP->next;
+    corCoLoopWake(wP->park);
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// readTurnHandOff - the reader stops: another waiting call takes the read turn
+//
+static void readTurnHandOff(MuxConn* mP)
+{
+  for (CorRestCorCall* callP = mP->calls; callP != NULL; callP = callP->next)
+  {
+    if (callP->park != NULL)
+    {
+      corCoLoopWake(callP->park);
+      return;
+    }
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// muxGet - the thread's connection to host:port, connected if it is not; the write turn taken
+//
+// The loop itself (not a coroutine) cannot wait for a turn: a connection busy with its coroutines gets
+// it a temporary one of its own.
+//
+static MuxConn* muxGet(const char* host, const char* port, int timeoutMs, bool* reusedP, const char** errorP)
+{
+  char     key[160];
+  MuxConn* mP    = NULL;
+  MuxConn* freeP = NULL;                             // an empty slot
+  MuxConn* idleP = NULL;                             // or an idle connection to another peer, to make room
+
+  snprintf(key, sizeof(key), "%s:%s", host, port);
+
+  for (int i = 0; i < CLIENT_CONNS_MAX; i++)
+  {
+    MuxConn* cP = clientConnV[i];
+
+    if ((cP != NULL) && ((cP->conn.fd >= 0) || (cP->writing == true)) && (strcmp(cP->conn.peer, key) == 0))
+    {
+      mP = cP;
+      break;
+    }
+
+    if (cP == NULL)                                  // an empty slot: allocated only when it is the one taken
+    {
+      if ((freeP == NULL) && ((cP = calloc(1, sizeof(MuxConn))) != NULL))
+      {
+        cP->conn.fd    = -1;
+        clientConnV[i] = cP;
+        freeP          = cP;
+      }
+      continue;
+    }
+
+    if ((freeP == NULL) && (cP->conn.fd < 0) && (cP->writing == false) && (cP->calls == NULL))
+      freeP = cP;
+    else if ((idleP == NULL) && (cP->calls == NULL) && (cP->writing == false) && (cP->reading == false))
+      idleP = cP;
+  }
+
+  bool loopItself = (corCoCurrent() == NULL) && (mP != NULL) && ((mP->writing == true) || (mP->reading == true));
+
+  if ((mP != NULL) && (loopItself == false))
+  {
+    if (writeTurn(mP) == false)
+    {
+      *errorP = "cor:// connection busy";
+      return NULL;
+    }
+
+    if (mP->conn.fd >= 0)                            // connected - by the coroutine whose turn it was, perhaps
+    {
+      *reusedP = true;
+      return mP;
+    }
+
+    writeTurnRelease(mP);                            // that connect failed
+    *errorP = "cannot connect to the cor:// endpoint";
+    return NULL;
+  }
+
+  if (loopItself == true)
+    freeP = NULL;
+  else if ((freeP == NULL) && (idleP != NULL))
+  {
+    freeP = idleP;
+    connClose(&freeP->conn);
+  }
+
+  if (freeP == NULL)                                 // a connection for this call only
+  {
+    if ((freeP = calloc(1, sizeof(MuxConn))) == NULL)
+    {
+      *errorP = "out of memory";
+      return NULL;
+    }
+    freeP->conn.fd   = -1;
+    freeP->temporary = true;
+  }
+
+  //
+  // Named, and both turns taken, BEFORE the connect: the HELLO exchange waits for the peer, and in a
+  // coroutine that wait yields - another coroutine of the thread finds the connection by its name and
+  // waits for the write turn, which it gets once the tables are open
+  //
+  snprintf(freeP->conn.peer, sizeof(freeP->conn.peer), "%s", key);
+  freeP->writing = true;
+  freeP->reading = true;
+
+  bool ok = clientConnect(&freeP->conn, host, port, timeoutMs, errorP);
+
+  freeP->reading = false;
+
+  if (ok == false)
+  {
+    writeTurnRelease(freeP);
+    if (freeP->temporary == true)
+      free(freeP);
+    return NULL;
+  }
+
+  *reusedP = false;
+  return freeP;                                      // the write turn is the caller's
 }
 
 
@@ -1497,30 +1936,28 @@ static CorNode* requestTree(CorAlloc* kaP, CorRestVerb verb, const char* pathAnd
 
 // -----------------------------------------------------------------------------
 //
-// corRestCorSend -
+// corRestCorStart -
 //
-bool corRestCorSend(const char*         url,
-                    CorRestVerb         verb,
-                    const char*         pathAndQuery,
-                    CorRestKeyValue*    headerV,
-                    int                 headerCount,
-                    CorNode*            bodyTree,
-                    const char*         bodyText,
-                    int                 timeoutMs,
-                    CorAlloc*           respAllocP,
-                    CorRestCorResponse* respP,
-                    const char**        errorP)
+CorRestCorCall* corRestCorStart(const char*       url,
+                                CorRestVerb       verb,
+                                const char*       pathAndQuery,
+                                CorRestKeyValue*  headerV,
+                                int               headerCount,
+                                CorNode*          bodyTree,
+                                const char*       bodyText,
+                                int               timeoutMs,
+                                CorAlloc*         respAllocP,
+                                const char**      errorP)
 {
   char host[128];
   char port[16];
 
-  memset(respP, 0, sizeof(CorRestCorResponse));
   *errorP = NULL;
 
   if (authority(url, host, sizeof(host), port, sizeof(port)) == false)
   {
     *errorP = "not a cor://host:port URL";
-    return false;
+    return NULL;
   }
 
   if (timeoutMs <= 0)
@@ -1538,9 +1975,20 @@ bool corRestCorSend(const char*         url,
     if ((copy == NULL) || ((bodyTree = corJsonParse(&cj, copy)) == NULL))
     {
       *errorP = "the request body is not JSON";
-      return false;
+      return NULL;
     }
   }
+
+  CorRestCorCall* callP = (CorRestCorCall*) calloc(1, sizeof(CorRestCorCall));
+
+  if (callP == NULL)
+  {
+    *errorP = "out of memory";
+    return NULL;
+  }
+
+  callP->respAllocP = respAllocP;
+  callP->deadline   = nowMs() + timeoutMs;
 
   char*    savedName = (bodyTree != NULL) ? bodyTree->name : NULL;
   CorNode* savedNext = (bodyTree != NULL) ? bodyTree->next : NULL;
@@ -1554,96 +2002,43 @@ bool corRestCorSend(const char*         url,
   CorNode* reqP = requestTree(respAllocP, verb, pathAndQuery, headerV, headerCount, bodyTree);
 
   //
-  // Send, and read the response. A connection the peer dropped since its last use (a restart) fails
-  // on its first write or read: that one is retried once, on a fresh connection.
+  // Sent - on the thread's connection to the peer. One the peer dropped since its last use (a restart)
+  // fails on the write: that one is retried once, on a fresh connection.
   //
-  bool     ok      = false;
-  char*    buf     = NULL;
-  int      len     = 0;
-
-  for (int attempt = 0; (attempt < 2) && (ok == false); attempt++)
+  for (int attempt = 0; attempt < 2; attempt++)
   {
     bool     reused = false;
-    CorConn* cP     = clientConnGet(host, port, timeoutMs, &reused, errorP);
+    MuxConn* mP     = muxGet(host, port, timeoutMs, &reused, errorP);
 
-    if (cP == NULL)
+    if (mP == NULL)
       break;
 
-    uint32_t correlation = ++cP->correlation;
-    uint8_t  type;
-    uint32_t respCorrelation;
+    callP->mP          = mP;
+    callP->reused      = reused;
+    callP->correlation = ++mP->conn.correlation;
+    callP->next        = mP->calls;
+    mP->calls          = callP;
 
-    if ((frameSend(cP, FRAME_REQUEST, correlation, reqP, timeoutMs) == true) &&
-        (frameRecv(cP, &type, &respCorrelation, &buf, &len, respAllocP, timeoutMs, errorP) == true))
+    bool sent = frameSend(&mP->conn, FRAME_REQUEST, callP->correlation, reqP, timeoutMs);
+
+    writeTurnRelease(mP);
+
+    if (sent == true)
     {
-      if ((type != FRAME_RESPONSE) || (respCorrelation != correlation))
-      {
-        *errorP = "unexpected frame in answer";
-        connClose(cP);
-        clientConnRelease(cP);
-        break;
-      }
-
-      CorNode* respTreeP = corTreeBinDecode(buf, len, codecP, &cP->in, respAllocP, errorP);
-
-      if (respTreeP == NULL)
-      {
-        connClose(cP);                               // the tables can no longer be trusted
-        clientConnRelease(cP);
-        break;
-      }
-
-      clientConnRelease(cP);                         // the response is decoded - the connection is not needed
-
-      CorNode* statusP  = corTreeLookup(respTreeP, "status");
-      CorNode* headersP = corTreeLookup(respTreeP, "headers");
-      CorNode* bodyP    = corTreeLookup(respTreeP, "body");
-      CorNode* textP    = corTreeLookup(respTreeP, "text");
-
-      respP->status = ((statusP != NULL) && (statusP->type == CorInt)) ? (int) statusP->value.i : 500;
-
-      if ((headersP != NULL) && (headersP->type == CorObject))
-      {
-        int n = 0;
-
-        for (CorNode* hP = headersP->value.head; hP != NULL; hP = hP->next)
-          ++n;
-
-        respP->headerV = (n > 0) ? (CorRestKeyValue*) corAlloc(respAllocP, n * sizeof(CorRestKeyValue)) : NULL;
-        for (CorNode* hP = headersP->value.head; (hP != NULL) && (respP->headerV != NULL); hP = hP->next)
-        {
-          if (hP->type != CorString)
-            continue;
-          respP->headerV[respP->headerCount].key   = hP->name;
-          respP->headerV[respP->headerCount].value = hP->value.s;
-          respP->headerCount += 1;
-        }
-      }
-
-      if (bodyP != NULL)
-      {
-        bodyP->name = NULL;
-        bodyP->next = NULL;
-        respP->bodyTree = bodyP;
-      }
-      else if ((textP != NULL) && (textP->type == CorString))
-        respP->bodyText = textP->value.s;
-
-      ok = true;
+      *errorP = NULL;
+      break;
     }
-    else
-    {
-      connClose(cP);
-      clientConnRelease(cP);
 
-      //
-      // Retried ONLY on a connection that was reused and that the peer had closed - a restart since
-      // its last use. Never after a timeout: the peer may be executing it, and a second POST would
-      // create twice.
-      //
-      if ((reused == false) || (*errorP == NULL) || (strcmp(*errorP, "connection closed") != 0))
-        break;
-    }
+    callUnlink(callP);
+    callP->mP = NULL;
+    muxFail(mP, "connection closed");                // whatever else was in flight on it is lost too
+    *errorP   = "connection closed";
+
+    if (mP->temporary == true)
+      free(mP);
+
+    if (reused == false)
+      break;
   }
 
   if (bodyTree != NULL)
@@ -1652,5 +2047,246 @@ bool corRestCorSend(const char*         url,
     bodyTree->next = savedNext;
   }
 
+  if (callP->mP == NULL)
+  {
+    free(callP);
+    return NULL;
+  }
+
+  return callP;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// readFrame - the read turn's work: one frame off the connection, decoded, handed to its call
+//
+// Returns false when the connection is broken (and fails it).
+//
+static bool readFrame(MuxConn* mP)
+{
+  uint8_t  hdr[FRAME_HEADER_LEN];
+  uint32_t correlation;
+  uint32_t len;
+
+  if (connRead(&mP->conn, hdr, FRAME_HEADER_LEN, 30000) == false)
+  {
+    muxFail(mP, (errno == ETIMEDOUT) ? "timed out" : "connection closed");
+    return false;
+  }
+
+  memcpy(&correlation, &hdr[8],  4);
+  memcpy(&len,         &hdr[12], 4);
+
+  if ((memcmp(hdr, frameMagic, 4) != 0) || (hdr[4] != FRAME_RESPONSE) || (len > FRAME_MAX))
+  {
+    muxFail(mP, "unexpected frame in answer");
+    return false;
+  }
+
+  CorRestCorCall* callP = mP->calls;
+
+  while ((callP != NULL) && (callP->correlation != correlation))
+    callP = callP->next;
+
+  //
+  // Its call's memory - or, for a call nobody waits for any more, a scratch buffer: decoded all the
+  // same, the tables need it
+  //
+  CorAlloc  scratch;
+  char      scratchBuf[4096];
+  CorAlloc* kaP = (callP != NULL) ? callP->respAllocP : &scratch;
+
+  if (callP == NULL)
+    corAllocBufferInit(&scratch, scratchBuf, sizeof(scratchBuf), 64 * 1024, NULL, "cor:// late response");
+
+  char*       buf   = (char*) corAlloc(kaP, len + 1);
+  const char* error = "out of memory";
+  CorNode*    treeP = NULL;
+
+  if ((buf != NULL) && (connRead(&mP->conn, buf, (int) len, 30000) == true))
+    treeP = corTreeBinDecode(buf, (int) len, codecP, &mP->conn.in, kaP, &error);
+  else if (buf != NULL)
+    error = "connection closed";
+
+  if (callP == NULL)
+    corAllocBufferReset(&scratch, false);
+
+  if ((buf == NULL) || (treeP == NULL))
+  {
+    muxFail(mP, error);                              // the tables can no longer be trusted
+    return false;
+  }
+
+  if (callP != NULL)
+    callDone(callP, treeP, NULL);
+
+  return true;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// responseFill - the response tree, as a CorRestCorResponse
+//
+static void responseFill(CorNode* respTreeP, CorAlloc* respAllocP, CorRestCorResponse* respP)
+{
+  CorNode* statusP  = corTreeLookup(respTreeP, "status");
+  CorNode* headersP = corTreeLookup(respTreeP, "headers");
+  CorNode* bodyP    = corTreeLookup(respTreeP, "body");
+  CorNode* textP    = corTreeLookup(respTreeP, "text");
+
+  respP->status = ((statusP != NULL) && (statusP->type == CorInt)) ? (int) statusP->value.i : 500;
+
+  if ((headersP != NULL) && (headersP->type == CorObject))
+  {
+    int n = 0;
+
+    for (CorNode* hP = headersP->value.head; hP != NULL; hP = hP->next)
+      ++n;
+
+    respP->headerV = (n > 0) ? (CorRestKeyValue*) corAlloc(respAllocP, n * sizeof(CorRestKeyValue)) : NULL;
+    for (CorNode* hP = headersP->value.head; (hP != NULL) && (respP->headerV != NULL); hP = hP->next)
+    {
+      if (hP->type != CorString)
+        continue;
+      respP->headerV[respP->headerCount].key   = hP->name;
+      respP->headerV[respP->headerCount].value = hP->value.s;
+      respP->headerCount += 1;
+    }
+  }
+
+  if (bodyP != NULL)
+  {
+    bodyP->name = NULL;
+    bodyP->next = NULL;
+    respP->bodyTree = bodyP;
+  }
+  else if ((textP != NULL) && (textP->type == CorString))
+    respP->bodyText = textP->value.s;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCorWait -
+//
+bool corRestCorWait(CorRestCorCall* callP, CorRestCorResponse* respP, const char** errorP)
+{
+  MuxConn*      mP     = callP->mP;
+  CorRestState* savedP = corRestP;
+
+  memset(respP, 0, sizeof(CorRestCorResponse));
+
+  while (callP->done == false)
+  {
+    int remaining = (int) (callP->deadline - nowMs());
+
+    if (remaining <= 0)
+      break;
+
+    //
+    // Another coroutine has the read turn: it hands this call its response - or the turn
+    //
+    if (mP->reading == true)
+    {
+      if (corCoCurrent() == NULL)                    // the loop itself, on a connection its coroutines read: cannot wait for them
+        break;
+
+      corCoLoopPark(&callP->park, remaining);
+      callP->park = NULL;
+      corRestP    = savedP;
+      continue;
+    }
+
+    //
+    // The read turn: wait for the connection to have something - with nothing consumed, a timeout
+    // here leaves it whole - then one frame
+    //
+    mP->reading = true;
+
+    bool ready = (mP->conn.rpos < mP->conn.rlen) || (corRestWaitFd(mP->conn.fd, POLLIN, remaining, NULL) > 0);
+
+    corRestP = savedP;
+
+    if (ready == true)
+      readFrame(mP);
+
+    mP->reading = false;
+    corRestP    = savedP;
+  }
+
+  if (callP->done == false)                          // timed out: the response, if it comes, is dropped
+  {
+    callUnlink(callP);
+    callP->error = "timed out";
+  }
+
+  readTurnHandOff(mP);                               // another call that waits takes the read turn
+
+  bool ok = (callP->error == NULL);
+
+  if (ok == true)
+  {
+    responseFill(callP->respTreeP, callP->respAllocP, respP);
+    respP->receivedMs = callP->receivedMs;
+  }
+  else
+    *errorP = callP->error;
+
+  if ((mP->temporary == true) && (mP->calls == NULL))
+  {
+    connClose(&mP->conn);
+    free(mP);
+  }
+
+  free(callP);
   return ok;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCorSend - Start and Wait; a call sent on a connection the peer had closed is retried once
+//
+bool corRestCorSend(const char*         url,
+                    CorRestVerb         verb,
+                    const char*         pathAndQuery,
+                    CorRestKeyValue*    headerV,
+                    int                 headerCount,
+                    CorNode*            bodyTree,
+                    const char*         bodyText,
+                    int                 timeoutMs,
+                    CorAlloc*           respAllocP,
+                    CorRestCorResponse* respP,
+                    const char**        errorP)
+{
+  for (int attempt = 0; attempt < 2; attempt++)
+  {
+    CorRestCorCall* callP = corRestCorStart(url, verb, pathAndQuery, headerV, headerCount, bodyTree, bodyText, timeoutMs, respAllocP, errorP);
+
+    if (callP == NULL)
+    {
+      memset(respP, 0, sizeof(CorRestCorResponse));
+      return false;
+    }
+
+    bool reused = callP->reused;
+
+    if (corRestCorWait(callP, respP, errorP) == true)
+      return true;
+
+    //
+    // Retried ONLY on a connection that was reused and that the peer had closed - a restart since its
+    // last use. Never after a timeout: the peer may be executing it, and a second POST would create twice.
+    //
+    if ((reused == false) || (*errorP == NULL) || (strcmp(*errorP, "connection closed") != 0))
+      return false;
+  }
+
+  return false;
 }
