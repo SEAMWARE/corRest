@@ -107,6 +107,23 @@ typedef bool (*CorRestFinishInlineHook)(void);
 
 // -----------------------------------------------------------------------------
 //
+// CorRestCoroutineHook - may this request, one that can wait, run as a coroutine of the loop?
+//
+// A coroutine yields where it waits for a socket through corRestWaitFd - corRest's clients, the
+// @context download. A wait that is no socket of corRest's - a database driver's own (libmongoc), a
+// condition variable (a bridge service's reply) - would stop the whole loop instead. Only the
+// application knows which of those a request can meet.
+//
+// true = a coroutine of the loop that read it; false = as before: a worker (the builtin server), a
+// thread of its own for the connection (cor://). Called with the request's state bound. No hook = no
+// coroutines.
+//
+typedef bool (*CorRestCoroutineHook)(void);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
@@ -124,6 +141,8 @@ extern void corRestSetServiceInitHook(CorRestServiceInitHook fn);
 extern void corRestSetPostResponseHook(CorRestHook fn);
 extern void corRestSetInlineHook(CorRestInlineHook fn);
 extern void corRestSetFinishInlineHook(CorRestFinishInlineHook fn);
+extern void corRestSetCoroutineHook(CorRestCoroutineHook fn);
+extern bool corRestCoroutineAllowed(void);           // the hook's answer for the bound request - false with no hook
 extern void corRestSetUserDataHooks(CorRestUserDataAllocHook allocFn, CorRestUserDataFreeHook freeFn);
 extern void corRestSetPrettySpaces(int spaces);
 extern void corRestSetMaxRequestSize(unsigned long long bytes);

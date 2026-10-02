@@ -22,6 +22,7 @@
 #include <netinet/tcp.h>                         // TCP_NODELAY
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
 
+#include "corRest/corRestResolve.h"             // corRestResolve
 #include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientRequest, CorRestClientResponse
 #include "corAlloc/corAlloc.h"                   // corAlloc
@@ -276,7 +277,7 @@ static int tcpConnect(const char* host, unsigned short port, int timeoutMs)
 
   snprintf(portStr, sizeof(portStr), "%d", port);
 
-  int r = getaddrinfo(host, portStr, &hints, &res);
+  int r = corRestResolve(host, portStr, &hints, &res);
   if (r != 0 || res == NULL)
     return -1;
 
@@ -293,11 +294,13 @@ static int tcpConnect(const char* host, unsigned short port, int timeoutMs)
 
     r = connect(fd, rp->ai_addr, rp->ai_addrlen);
 
+    //
+    // The socket stays non-blocking: every wait on it is corRestWaitFd - a poll() on a thread, a yield
+    // inside a coroutine, where a blocking write or read would stop the whole event loop
+    //
+    (void) flags;
     if (r == 0)
-    {
-      fcntl(fd, F_SETFL, flags);
       break;
-    }
 
     if (errno == EINPROGRESS)
     {
@@ -308,10 +311,7 @@ static int tcpConnect(const char* host, unsigned short port, int timeoutMs)
         socklen_t errLen = sizeof(err);
         getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errLen);
         if (err == 0)
-        {
-          fcntl(fd, F_SETFL, flags);
           break;
-        }
       }
     }
 
@@ -373,7 +373,8 @@ static int connWriteAll(CorRestClientConn* conn, const char* buf, int len)
     int n = connWrite(conn, buf + totalSent, len - totalSent);
     if (n < 0)
     {
-      if (errno == EAGAIN || errno == EWOULDBLOCK)
+      // a full send buffer: wait until there is room (a yield, inside a coroutine) - not spin
+      if (((errno == EAGAIN) || (errno == EWOULDBLOCK)) && (corRestWaitFd(conn->fd, POLLOUT, 30000, NULL) > 0))
         continue;
       return -1;
     }
@@ -422,11 +423,28 @@ static int connReadMore(CorRestClientConn* conn, int timeoutMs)
   if (connEnsureBuf(conn, 4096) != 0)
     return -1;
 
-  int r = corRestWaitFd(conn->fd, POLLIN, timeoutMs, NULL);
-  if (r <= 0)
-    return r == 0 ? -2 : -1;
+  int n;
 
-  int n = connRead(conn, conn->buf + conn->bufLen, conn->bufSize - conn->bufLen);
+  while (true)
+  {
+    //
+    // No wait when OpenSSL holds decrypted bytes already: the socket may have nothing more to say,
+    // and a wait for it would stall the response until the timeout
+    //
+    if (corRestClientTlsPending(conn) == 0)
+    {
+      int r = corRestWaitFd(conn->fd, POLLIN, timeoutMs, NULL);
+      if (r <= 0)
+        return r == 0 ? -2 : -1;
+    }
+
+    n = connRead(conn, conn->buf + conn->bufLen, conn->bufSize - conn->bufLen);
+
+    if ((n < 0) && ((errno == EAGAIN) || (errno == EWOULDBLOCK)))   // ready, and then not: wait again
+      continue;
+    break;
+  }
+
   if (n <= 0)
     return n == 0 ? -3 : -1;
 

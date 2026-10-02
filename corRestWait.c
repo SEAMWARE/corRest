@@ -13,6 +13,8 @@
 #include <time.h>                                   // clock_gettime
 
 #include "corBase/corCo.h"                          // corCoCurrent
+#include "corBase/corCoLoop.h"                      // corCoLoopInit, corCoLoopWait, corCoLoopResumeHookSet
+#include "corRest/corRest.h"                        // corRestP
 
 #include "corRest/corRestWait.h"                    // Own interface
 
@@ -77,4 +79,40 @@ int corRestWaitFd(int fd, short events, int timeoutMs, short* reventsP)
       timeoutMs = (int) left;
     }
   }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// coWaitBound - corCoLoopWait, with the request bound to the thread kept across the yield
+//
+// The loop and every other coroutine of the thread rebind corRestP meanwhile - and a request inside an
+// in-process forward may have it pointing at the inner request.
+//
+static int coWaitBound(int fd, short events, int timeoutMs, short* reventsP)
+{
+  CorRestState* savedP = corRestP;
+  int           r      = corCoLoopWait(fd, events, timeoutMs, reventsP);
+
+  corRestP = savedP;
+  return r;
+}
+
+static void coUnbind(void)
+{
+  corRestP = NULL;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCoLoopInit -
+//
+void corRestCoLoopInit(int epollFd)
+{
+  corCoLoopInit(epollFd);
+  corRestCoWaitSet(coWaitBound);
+  corCoLoopResumeHookSet(coUnbind);
 }

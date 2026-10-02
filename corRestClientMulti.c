@@ -25,6 +25,7 @@
 #include <time.h>                                // clock_gettime
 
 #include "corBase/corCo.h"                      // corCoCurrent
+#include "corRest/corRestResolve.h"             // corRestResolve
 #include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientMulti, CorRestClientRequest, CorRestClientResponse
 #include "corAlloc/CorAlloc.h"                   // CorAlloc
@@ -311,7 +312,7 @@ static int startConnect(CorrMultiEntry* entry)
   hints.ai_socktype = SOCK_STREAM;
   snprintf(portStr, sizeof(portStr), "%d", req->port);
 
-  if (getaddrinfo(req->host, portStr, &hints, &res) != 0 || res == NULL)
+  if (corRestResolve(req->host, portStr, &hints, &res) != 0 || res == NULL)
     return -1;
 
   //

@@ -35,6 +35,7 @@ CorRestPreServiceHook  corRestPreServiceHookF   = preServiceHookNoop;
 CorRestHook            corRestPostResponseHook  = hookNoop;
 CorRestInlineHook      corRestInlineHookF       = NULL;
 CorRestFinishInlineHook corRestFinishInlineHookF = NULL;
+CorRestCoroutineHook   corRestCoroutineHookF    = NULL;
 CorRestServiceInitHook corRestServiceInitHookF  = NULL;
 CorRestUserDataAllocHook corRestUserDataAllocHookF = NULL;
 CorRestUserDataFreeHook  corRestUserDataFreeHookF  = NULL;
@@ -230,4 +231,20 @@ void corRestCorsConfig(const CorRestCorsConfig* config)
 void corRestSetFinishInlineHook(CorRestFinishInlineHook fn)
 {
   corRestFinishInlineHookF = fn;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestSetCoroutineHook / corRestCoroutineAllowed -
+//
+void corRestSetCoroutineHook(CorRestCoroutineHook fn)
+{
+  corRestCoroutineHookF = fn;
+}
+
+bool corRestCoroutineAllowed(void)
+{
+  return (corRestCoroutineHookF != NULL) && (corRestCoroutineHookF() == true);
 }
