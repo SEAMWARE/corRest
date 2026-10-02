@@ -24,6 +24,8 @@
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
 #include <time.h>                                // clock_gettime
 
+#include "corBase/corCo.h"                      // corCoCurrent
+#include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientMulti, CorRestClientRequest, CorRestClientResponse
 #include "corAlloc/CorAlloc.h"                   // CorAlloc
 
@@ -618,7 +620,15 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
     if (waitMs > 1000)
       waitMs = 1000;
 
-    int nev = epoll_wait(epollFd, events, 64, waitMs);
+    //
+    // Inside a coroutine, the wait is the scheduler's (corRestWaitFd - an epoll fd is pollable itself),
+    // and the set is then read without waiting. Elsewhere one epoll_wait, as always.
+    //
+    int nev;
+    if (corCoCurrent() != NULL)
+      nev = (corRestWaitFd(epollFd, POLLIN, waitMs, NULL) > 0) ? epoll_wait(epollFd, events, 64, 0) : 0;
+    else
+      nev = epoll_wait(epollFd, events, 64, waitMs);
 
     for (int e = 0; e < nev; e++)
     {

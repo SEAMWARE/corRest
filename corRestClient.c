@@ -22,6 +22,7 @@
 #include <netinet/tcp.h>                         // TCP_NODELAY
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
 
+#include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientRequest, CorRestClientResponse
 #include "corAlloc/corAlloc.h"                   // corAlloc
 #include "corAlloc/CorAlloc.h"                     // CorAlloc
@@ -300,11 +301,7 @@ static int tcpConnect(const char* host, unsigned short port, int timeoutMs)
 
     if (errno == EINPROGRESS)
     {
-      struct pollfd pfd;
-      pfd.fd     = fd;
-      pfd.events = POLLOUT;
-
-      r = poll(&pfd, 1, timeoutMs);
+      r = corRestWaitFd(fd, POLLOUT, timeoutMs, NULL);
       if (r > 0)
       {
         int err = 0;
@@ -425,11 +422,7 @@ static int connReadMore(CorRestClientConn* conn, int timeoutMs)
   if (connEnsureBuf(conn, 4096) != 0)
     return -1;
 
-  struct pollfd pfd;
-  pfd.fd     = conn->fd;
-  pfd.events = POLLIN;
-
-  int r = poll(&pfd, 1, timeoutMs);
+  int r = corRestWaitFd(conn->fd, POLLIN, timeoutMs, NULL);
   if (r <= 0)
     return r == 0 ? -2 : -1;
 

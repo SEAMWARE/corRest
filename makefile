@@ -92,6 +92,7 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestParamRegistry.c  \
                 corRestClient.c         \
                 corRestCor.c            \
+                corRestWait.c           \
                 corRestClientPool.c     \
                 corRestClientParse.c    \
                 corRestClientTls.c      \
