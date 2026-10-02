@@ -763,10 +763,12 @@ void corRestProcessRequest(void)
 
 // -----------------------------------------------------------------------------
 //
-// corRestSelfForwardDepth - per-thread guard against runaway in-process forwards
+// COR_REST_SELF_FORWARD_MAX_DEPTH - guard against runaway in-process forwards
+//
+// The depth is the request's (CorRestState.selfForwardDepth): a coroutine may wait inside one while
+// another request on the same thread goes through its own.
 //
 #define COR_REST_SELF_FORWARD_MAX_DEPTH 8
-static __thread int corRestSelfForwardDepth = 0;
 
 
 
@@ -808,18 +810,20 @@ int corRestProcessInProcess(CorRestVerb       verb,
   // Via-based loop detection normally stops an in-process forward from matching
   // the same CSR and self-forwarding again; guard the recursion depth too in
   // case alias matching is ever misconfigured.
-  if (corRestSelfForwardDepth >= COR_REST_SELF_FORWARD_MAX_DEPTH)
+  CorRestState* outerP = corRestP;
+  int           depth  = (outerP != NULL) ? outerP->selfForwardDepth : 0;
+
+  if (depth >= COR_REST_SELF_FORWARD_MAX_DEPTH)
     return -1;
 
-  CorRestState* outerP = corRestP;
   CorRestState* innerP = (CorRestState*) malloc(sizeof(CorRestState));
   if (innerP == NULL)
     return -1;
 
   corRestP = innerP;
-  corRestSelfForwardDepth++;
 
   corRestStateInit(NULL, path, corRestVerbToString(verb));
+  innerP->selfForwardDepth = depth + 1;
 
   // The inner request gets its OWN application state (per-conn corNgsild), so it
   // can't clobber the paused outer's — this is what lets the distop layer drop
@@ -894,7 +898,6 @@ int corRestProcessInProcess(CorRestVerb       verb,
     corRestUserDataFreeHookF(corRest.userData);
   free(innerP);
 
-  corRestSelfForwardDepth--;
   corRestP = outerP;
 
   return status;
