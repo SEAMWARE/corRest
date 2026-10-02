@@ -936,7 +936,7 @@ static bool requestStart(ServerConn* scP)
 
   if (corRestAsyncDispatch() == true)
   {
-    CorCo* coP = (coRunning < CO_MAX) ? corCoCreate(requestCoroutine, scP) : NULL;
+    CorCo* coP = ((coRunning < CO_MAX) && (corRestCoroutineAllowed() == true)) ? corCoCreate(requestCoroutine, scP) : NULL;
 
     corRestP = NULL;
 

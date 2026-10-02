@@ -67,6 +67,9 @@
 
 #include "corHttp/CorHttp.h"              // CorHttpServer, CorHttpConn
 
+#include "corBase/corCo.h"                       // corCoCreate
+#include "corBase/corCoLoop.h"                   // corCoLoopResume
+#include "corRest/corRestWait.h"                 // corRestCoLoopInit
 #include "corRest/CorRestState.h"         // CorRestState, corRest
 #include "corRest/corRestStateInit.h"     // corRestStateInit, corRestUrlPathNormalize
 #include "corRest/corRestHooks.h"         // CorRestHook, ...
@@ -168,6 +171,33 @@ static void requestResponseFill(CorHttpConn* connP)
   //
   if ((corRest.out.payload != NULL) && (corRest.out.payloadSize > 0))
     corHttpResponseBody(connP, corRest.out.payload, corRest.out.payloadSize);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// requestCoroutine - a request that can wait, run as a coroutine of the loop that read it
+//
+// The request, its response, and the response on its way - all on the loop's thread (corHttpResumeHere:
+// no worker hand-back, no eventfd).
+//
+enum { CO_MAX = 1024 };
+
+static __thread int coRunning = 0;                  // this loop's coroutines alive
+
+static void requestCoroutine(void* arg)
+{
+  CorHttpConn* connP = (CorHttpConn*) arg;
+
+  corRestP = (CorRestState*) connP->userData;
+  corRestProcessRequest();
+  requestResponseFill(connP);
+  corRestP = NULL;
+
+  corHttpResumeHere(connP);                          // may finish the request - httpRequestDone - before it returns
+
+  coRunning -= 1;
 }
 
 
@@ -314,13 +344,26 @@ static void httpRequestCb(CorHttpConn* connP)
   if (corRestAsyncDispatch() == true)
   {
     //
-    // Off the event loop: a DB round-trip or a distributed operation would stop
-    // every other connection for its duration. A request that waits on nothing
-    // runs on the loop instead - see CorRestInlineHook. Suspend BEFORE enqueue - a
-    // worker can finish before the enqueue call returns.
+    // A request that may wait (a distributed operation, an @context to download) must not stop
+    // every other connection of the loop for its duration - one that waits on nothing runs on the
+    // loop instead, see CorRestInlineHook. It runs as a COROUTINE of the loop (doc/coroutines.md):
+    // wherever it waits for a socket it yields, the loop serving the rest. The connection is out of
+    // the loop's epoll meanwhile - the coroutine owns it. A worker only when the loop has as many
+    // coroutines as it takes, or no stack is to be had.
     //
     corHttpSuspend(connP);
-    corRestAsyncEnqueue(stateP);
+
+    CorCo* coP = ((coRunning < CO_MAX) && (corRestCoroutineAllowed() == true)) ? corCoCreate(requestCoroutine, connP) : NULL;
+
+    if (coP == NULL)
+    {
+      corRestAsyncEnqueue(stateP);                  // suspend BEFORE enqueue - a worker can finish before it returns
+      return;
+    }
+
+    coRunning += 1;
+    corRestP   = NULL;
+    corCoLoopResume(coP);
     return;
   }
 
@@ -430,6 +473,11 @@ void corRestBackendResume(CorRestState* stateP)
 //
 static void* serveThread(void* serverP)
 {
+  //
+  // This thread is the loop: a request that waits runs as a coroutine of it (doc/coroutines.md)
+  //
+  corRestCoLoopInit(((CorHttpServer*) serverP)->epollFd);
+
   corHttpServe((CorHttpServer*) serverP);
   return NULL;
 }
