@@ -680,6 +680,8 @@ static void requestFinish(CorRestState* stateP)
 // onLoop: called on the event loop (an inline request). Then the post-response phase runs here only
 // when the application's finish-inline hook allows it, like HTTP's; otherwise it goes to a worker.
 //
+static bool finishCoroutineStart(CorRestState* stateP);
+
 static void requestRespond(CorRestState* stateP, bool onLoop)
 {
   ServerConn* scP = (ServerConn*) stateP->connection;
@@ -715,6 +717,22 @@ static void requestRespond(CorRestState* stateP, bool onLoop)
   {
     requestFinish(stateP);
     return;
+  }
+
+  //
+  // A phase that can wait, as a coroutine: in the request's own if it is one (the connection is armed
+  // again when the phase is done, as after a worker's), or in one of its own
+  //
+  if (corRestFinishCoroutineAllowed() == true)
+  {
+    if (corCoCurrent() != NULL)
+    {
+      requestFinish(stateP);
+      return;
+    }
+
+    if (finishCoroutineStart(stateP) == true)
+      return;
   }
 
   stateP->asyncFinishing = true;
@@ -754,6 +772,31 @@ static void requestCoroutine(void* arg)
   requestRespond(scP->stateP, true);
 
   coRunning -= 1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// finishCoroutine - the post-response phase of an inline request, when it can wait: a coroutine
+//
+static void finishCoroutine(void* arg)
+{
+  requestFinish((CorRestState*) arg);
+  coRunning -= 1;
+}
+
+static bool finishCoroutineStart(CorRestState* stateP)
+{
+  CorCo* coP = (coRunning < CO_MAX) ? corCoCreate(finishCoroutine, stateP) : NULL;
+
+  if (coP == NULL)
+    return false;
+
+  coRunning += 1;
+  corRestP   = NULL;
+  corCoLoopResume(coP);
+  return true;
 }
 
 

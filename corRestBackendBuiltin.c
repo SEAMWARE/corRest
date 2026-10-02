@@ -204,6 +204,18 @@ static void requestCoroutine(void* arg)
 
 // -----------------------------------------------------------------------------
 //
+// finishCoroutine - a post-response phase that can wait, run as a coroutine of the loop
+//
+static void finishCoroutine(void* arg)
+{
+  corRestBackendFinish((CorRestState*) arg);
+  coRunning -= 1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // httpRequestCb - one complete request, on the event-loop thread
 //
 static void httpRequestCb(CorHttpConn* connP)
@@ -382,14 +394,16 @@ static void httpRequestCb(CorHttpConn* connP)
 // same moment MHD's NOTIFY_COMPLETED fires, and it has to be: the response
 // headers and body are borrowed from the arena released at the end of it.
 //
-// ⚠️ THE WORK ITSELF MUST NOT RUN HERE. The post-response phase dispatches the
+// ⚠️ THE WORK ITSELF MUST NOT RUN HERE, BLOCKING. The post-response phase dispatches the
 // notifications for a write, and a notification is compacted with the
 // subscription's @context - which can be one THIS BROKER HOSTS. The loop thread
 // would then be waiting for an answer only the loop thread can produce. It does
 // not hang forever, which is worse: the download times out, the notification
 // goes out ten seconds late with an uncompacted body, and nothing says why.
 //
-// So it goes to a worker, and the loop returns immediately. Everything the
+// So it goes to a worker - or runs as a coroutine of the loop, which yields where it waits and lets
+// the loop answer that @context request itself (CorRestFinishCoroutineHook) - and the loop returns
+// immediately. Everything the
 // phase reads was copied out of the connection in httpRequestCb, so the
 // connection is free to take its next request the instant this returns.
 //
@@ -415,6 +429,24 @@ static void httpRequestDone(CorHttpConn* connP)
       corRestBackendFinish(stateP);
       return;
     }
+  }
+
+  //
+  // ...or as a coroutine of this loop, which yields where the phase waits (a notification's POST).
+  // Started right here - this may be inside the request's own coroutine (it answered through
+  // corHttpResumeHere), and a coroutine resumed from a coroutine yields back to it: the connection's
+  // own work goes on, and the loop resumes the phase when what it waits for is ready.
+  //
+  corRestP = stateP;
+  CorCo* coP = ((coRunning < CO_MAX) && (corRestFinishCoroutineAllowed() == true)) ? corCoCreate(finishCoroutine, stateP) : NULL;
+  corRestP = NULL;
+
+  if (coP != NULL)
+  {
+    coRunning += 1;
+    corCoLoopResume(coP);
+    corRestP = NULL;                // the phase may have yielded with its request bound
+    return;
   }
 
   if (corRestAsyncFinish(stateP) == true)
