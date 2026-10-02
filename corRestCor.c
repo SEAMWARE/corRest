@@ -1290,6 +1290,13 @@ static void connInput(ServerConn* scP)
 
     if (requestStart(scP, body, len, correlation) == false)
       connDie(scP);
+
+    //
+    // On only with bytes already buffered: what has not been read yet, the (level-triggered) epoll
+    // reports - a read() here would mostly find nothing, a system call per request for an EAGAIN
+    //
+    if (scP->conn.rpos >= scP->conn.rlen)
+      return;
   }
 }
 
@@ -2211,6 +2218,21 @@ bool corRestCorWait(CorRestCorCall* callP, CorRestCorResponse* respP, const char
     bool ready = (mP->conn.rpos < mP->conn.rlen) || (corRestWaitFd(mP->conn.fd, POLLIN, remaining, NULL) > 0);
 
     corRestP = savedP;
+
+    //
+    // Ready: the bytes into the buffer now - connRead would otherwise find it empty and wait a second time
+    // for what is already there (an epoll_ctl and a round of the loop, per response)
+    //
+    if ((ready == true) && (mP->conn.rpos >= mP->conn.rlen))
+    {
+      ssize_t r = read(mP->conn.fd, mP->conn.rbuf, sizeof(mP->conn.rbuf));
+
+      if (r > 0)
+      {
+        mP->conn.rpos = 0;
+        mP->conn.rlen = (int) r;
+      }
+    }
 
     if (ready == true)
       readFrame(mP);
