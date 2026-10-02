@@ -56,6 +56,7 @@
 #include "corJson/corJsonCreate.h"                    // corJsonCreate
 #include "corJson/corJsonParse.h"                     // corJsonParse
 
+#include "corRest/corRestResolve.h"             // corRestResolve
 #include "corRest/corRestWait.h"                     // corRestWaitFd, corRestCoLoopInit
 #include "corBase/corCo.h"                            // corCoCreate
 #include "corBase/corCoLoop.h"                        // corCoLoopResume, corCoLoopEvent, corCoLoopExpire, corCoLoopTimeoutMs
@@ -164,7 +165,7 @@ static bool writeAll(int fd, const void* p, int n, int timeoutMs)
 {
   const char* cP = p;
 
-  (void) timeoutMs;                                  // blocking socket: send() waits - SO_SNDTIMEO bounds it (clientConnect)
+  (void) timeoutMs;                                  // a full send buffer waits below (ioWait, POLLOUT) - client and server sockets are non-blocking
 
   while (n > 0)
   {
@@ -232,7 +233,8 @@ static bool connRead(CorConn* cP, void* p, int n, int timeoutMs)
 
     if (r < 0)
     {
-      if (errno == EINTR)
+      // EAGAIN: a non-blocking socket that was ready and then was not - wait again (the client's)
+      if ((errno == EINTR) || (((errno == EAGAIN) || (errno == EWOULDBLOCK)) && (timeoutMs >= 0)))
         continue;
       return false;
     }
@@ -1231,7 +1233,7 @@ static bool clientConnect(CorConn* cP, const char* host, const char* port, int t
   hints.ai_family   = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  if (getaddrinfo(host, port, &hints, &resP) != 0)
+  if (corRestResolve(host, port, &hints, &resP) != 0)
   {
     *errorP = "cannot resolve the cor:// host";
     return false;
@@ -1245,7 +1247,24 @@ static bool clientConnect(CorConn* cP, const char* host, const char* port, int t
     if (fd < 0)
       continue;
 
-    if (connect(fd, aP->ai_addr, aP->ai_addrlen) == 0)
+    //
+    // Non-blocking, for good: the connect - and every later wait on the socket - is corRestWaitFd, a
+    // poll() on a thread and a yield inside a coroutine, where a blocking connect would stop the loop
+    //
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+
+    int r = connect(fd, aP->ai_addr, aP->ai_addrlen);
+
+    if ((r != 0) && (errno == EINPROGRESS) && (corRestWaitFd(fd, POLLOUT, timeoutMs, NULL) > 0))
+    {
+      int       err    = 0;
+      socklen_t errLen = sizeof(err);
+
+      getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errLen);
+      r = (err == 0) ? 0 : -1;
+    }
+
+    if (r == 0)
       cP->fd = fd;
     else
       close(fd);

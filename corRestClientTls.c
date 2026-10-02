@@ -9,6 +9,7 @@
 // TLS support for the HTTP client.
 //
 
+#include <poll.h>                               // POLLIN, POLLOUT
 #include <stdio.h>                               // snprintf
 #include <stdbool.h>                             // bool
 #include <string.h>                              // strlen
@@ -17,6 +18,7 @@
 #include <openssl/ssl.h>                         // SSL_*, SSL_CTX_*
 #include <openssl/err.h>                         // ERR_*
 
+#include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn
 
 
@@ -98,11 +100,25 @@ int corRestClientTlsConnect(CorRestClientConn* conn)
     return -1;
   }
 
-  int r = SSL_connect(ssl);
-  if (r != 1)
+  //
+  // The socket is non-blocking: the handshake waits for it through corRestWaitFd - a poll() on a
+  // thread, a yield inside a coroutine - as long as OpenSSL asks for more
+  //
+  while (true)
   {
-    SSL_free(ssl);
-    return -1;
+    int r = SSL_connect(ssl);
+
+    if (r == 1)
+      break;
+
+    int err = SSL_get_error(ssl, r);
+
+    if (((err != SSL_ERROR_WANT_READ) && (err != SSL_ERROR_WANT_WRITE)) ||
+        (corRestWaitFd(conn->fd, (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT, 10000, NULL) <= 0))
+    {
+      SSL_free(ssl);
+      return -1;
+    }
   }
 
   conn->ssl = ssl;
@@ -122,18 +138,26 @@ int corRestClientTlsRead(CorRestClientConn* conn, char* buf, int len)
   if (ssl == NULL)
     return -1;
 
-  int r = SSL_read(ssl, buf, len);
-  if (r <= 0)
+  //
+  // A non-blocking socket: OpenSSL may need more bytes (or to write some) before it has any to give -
+  // wait for that, and read again. 0 is the end of the stream only when the peer said so.
+  //
+  while (true)
   {
+    int r = SSL_read(ssl, buf, len);
+
+    if (r > 0)
+      return r;
+
     int err = SSL_get_error(ssl, r);
-    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
-      return 0;
+
     if (err == SSL_ERROR_ZERO_RETURN)
       return 0;
-    return -1;
-  }
 
-  return r;
+    if (((err != SSL_ERROR_WANT_READ) && (err != SSL_ERROR_WANT_WRITE)) ||
+        (corRestWaitFd(conn->fd, (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT, 30000, NULL) <= 0))
+      return -1;
+  }
 }
 
 
@@ -148,16 +172,30 @@ int corRestClientTlsWrite(CorRestClientConn* conn, const char* buf, int len)
   if (ssl == NULL)
     return -1;
 
-  int r = SSL_write(ssl, buf, len);
-  if (r <= 0)
+  while (true)
   {
-    int err = SSL_get_error(ssl, r);
-    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
-      return 0;
-    return -1;
-  }
+    int r = SSL_write(ssl, buf, len);
 
-  return r;
+    if (r > 0)
+      return r;
+
+    int err = SSL_get_error(ssl, r);
+
+    if (((err != SSL_ERROR_WANT_READ) && (err != SSL_ERROR_WANT_WRITE)) ||
+        (corRestWaitFd(conn->fd, (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT, 30000, NULL) <= 0))
+      return -1;
+  }
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestClientTlsPending - bytes OpenSSL holds already decrypted: a read needs no wait for the socket
+//
+int corRestClientTlsPending(CorRestClientConn* conn)
+{
+  return (conn->ssl != NULL) ? SSL_pending((SSL*) conn->ssl) : 0;
 }
 
 

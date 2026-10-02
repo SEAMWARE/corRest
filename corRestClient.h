@@ -257,6 +257,7 @@ extern void               corRestClientPoolPut(CorRestClientConn* conn);
 extern int   corRestClientTlsInit(void);
 extern void  corRestClientTlsInsecureSet(bool onoff);
 extern int   corRestClientTlsConnect(CorRestClientConn* conn);
+extern int   corRestClientTlsPending(CorRestClientConn* conn);
 extern int   corRestClientTlsRead(CorRestClientConn* conn, char* buf, int len);
 extern int   corRestClientTlsWrite(CorRestClientConn* conn, const char* buf, int len);
 extern void  corRestClientTlsClose(CorRestClientConn* conn);
