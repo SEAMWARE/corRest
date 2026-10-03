@@ -124,6 +124,23 @@ typedef bool (*CorRestCoroutineHook)(void);
 
 // -----------------------------------------------------------------------------
 //
+// CorRestFinishCoroutineHook - may this request's post-response phase run as a coroutine of the loop?
+//
+// Asked where CorRestFinishInlineHook said no - the phase has something that can wait (a notification,
+// above all). As a coroutine it yields where it waits, and the loop serves the other connections
+// meanwhile - an @context the broker hosts itself included, which is why the phase never ran on a
+// loop before. The same caveat as CorRestCoroutineHook: a wait that is not a socket of corRest's (a
+// database driver's own) would stop the loop; only the application knows which the phase can meet.
+//
+// true = a coroutine of the loop the response went out on; false = a worker, as before. Called with
+// the request's state bound. No hook = always a worker.
+//
+typedef bool (*CorRestFinishCoroutineHook)(void);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
@@ -143,6 +160,8 @@ extern void corRestSetInlineHook(CorRestInlineHook fn);
 extern void corRestSetFinishInlineHook(CorRestFinishInlineHook fn);
 extern void corRestSetCoroutineHook(CorRestCoroutineHook fn);
 extern bool corRestCoroutineAllowed(void);           // the hook's answer for the bound request - false with no hook
+extern void corRestSetFinishCoroutineHook(CorRestFinishCoroutineHook fn);
+extern bool corRestFinishCoroutineAllowed(void);     // the hook's answer for the bound request - false with no hook
 extern void corRestSetUserDataHooks(CorRestUserDataAllocHook allocFn, CorRestUserDataFreeHook freeFn);
 extern void corRestSetPrettySpaces(int spaces);
 extern void corRestSetMaxRequestSize(unsigned long long bytes);
