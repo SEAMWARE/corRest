@@ -9,7 +9,7 @@
 // Copyright 2026 Seamware
 // SPDX-License-Identifier: Apache-2.0
 //
-// cor:// - the broker's API over the cor binary format (coraine doc/cor-protocol.md § 5).
+// cor:// - the broker's API over the cor binary format (coraine doc/cor-protocol-details.md § 5).
 //
 // The same requests as HTTP, the same service routines - but what travels is the TREE: a request's
 // body arrives as the tree the service routine works on, and a response leaves as the tree it built,

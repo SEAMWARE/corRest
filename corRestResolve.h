@@ -9,7 +9,7 @@
 // Copyright 2026 Seamware
 // SPDX-License-Identifier: Apache-2.0
 //
-// corRestResolve - getaddrinfo, without stopping an event loop (coraine doc/coroutines.md § 4)
+// corRestResolve - getaddrinfo, without stopping an event loop (coraine doc/coroutines.md § 2)
 //
 // getaddrinfo blocks, and has no socket to wait on. Outside a coroutine - and for an address or
 // "localhost", which need no name server - it is plain getaddrinfo. Inside a coroutine, a name is

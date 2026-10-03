@@ -9,7 +9,7 @@
 // Copyright 2026 Seamware
 // SPDX-License-Identifier: Apache-2.0
 //
-// corRestWaitFd - the one place a client waits for a socket (coraine doc/coroutines.md § 3)
+// corRestWaitFd - the one place a client waits for a socket (coraine doc/coroutines.md § 2)
 //
 // Every wait of corRest's clients - the HTTP client, the multi client, the cor:// client - is this
 // call. Outside a coroutine it is poll() on one fd, as the clients did themselves. Inside one, it is

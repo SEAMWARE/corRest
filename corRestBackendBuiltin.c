@@ -581,7 +581,7 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
   // One loop accepts and deals the connections out in turn: the kernel's hash (SO_REUSEPORT) split 16
   // connections as unevenly as 11 and 5, and with a request running as a coroutine of the loop that
   // read it, the busier loop queued - the p99 of a 16-caller chain doubled in half the runs
-  // (doc/coroutines.md § 9).
+  // (coraine doc/coroutines.md § 4).
   //
   if (corHttpAcceptShare(corHttpServerV, corHttpLoops) != CorHttpOk)
   {
