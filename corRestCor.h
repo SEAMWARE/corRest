@@ -58,6 +58,7 @@ typedef struct CorRestCorResponse
   int               headerCount;
   CorNode*          bodyTree;         // the response body, as the peer built it - NULL if none
   char*             bodyText;         // or, for a body that was not a tree, its text
+  long long         receivedMs;       // CLOCK_MONOTONIC ms when its frame was read - the order responses came in
 } CorRestCorResponse;
 
 
@@ -84,5 +85,35 @@ extern bool corRestCorSend(const char*         url,
                            CorAlloc*           respAllocP,
                            CorRestCorResponse* respP,
                            const char**        errorP);
+
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestCorStart / corRestCorWait - a request sent now, its response collected later
+//
+// For a fan-out: start every request, then wait for each - they are in flight at the same time,
+// multiplexed on the thread's connection to each peer. corRestCorSend is the two in one.
+//
+// corRestCorStart: the request is encoded and sent before it returns - bodyTree (or bodyText, parsed
+// into respAllocP) is the caller's again then. NULL with *errorP when it could not be sent.
+// corRestCorWait: until the response is in, the connection fails, or the time is up - the response
+// lives in the respAllocP given to Start (do not reset it between the two). Frees the call: every call
+// started is waited for, once, on the thread that started it.
+//
+typedef struct CorRestCorCall CorRestCorCall;
+
+extern CorRestCorCall* corRestCorStart(const char*       url,
+                                       CorRestVerb       verb,
+                                       const char*       pathAndQuery,
+                                       CorRestKeyValue*  headerV,
+                                       int               headerCount,
+                                       CorNode*          bodyTree,
+                                       const char*       bodyText,
+                                       int               timeoutMs,
+                                       CorAlloc*         respAllocP,
+                                       const char**      errorP);
+extern bool corRestCorWait(CorRestCorCall* callP, CorRestCorResponse* respP, const char** errorP);
 
 #endif  // CORREST_CORRESTCOR_H_
