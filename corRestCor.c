@@ -466,7 +466,7 @@ static const char* helloCheck(CorNode* helloP, int* namespacesP)
 //
 // ServerConn - a CorConn, plus what a server needs to assemble frames off a non-blocking socket
 //
-// Multiplexed (doc/coroutines.md § 6, step 5): the connection is armed once, for good, and the loop
+// Multiplexed (coraine doc/cor-protocol.md § 5.3): the connection is armed once, for good, and the loop
 // reads every frame that comes - a request in, its state of its own (ServerReq), and on to the next;
 // they run at once (inline, or as coroutines of the loop) and their responses go out in the order
 // they finish. Every request's frame is DECODED when it arrives, and every response ENCODED when it
@@ -955,7 +955,7 @@ static void requestRespond(CorRestState* stateP, bool onLoop)
 
 // =============================================================================
 //
-// Coroutines on the loops (coraine doc/coroutines.md § 3)
+// Coroutines on the loops (coraine doc/coroutines.md § 1)
 //
 // A request that can wait runs as a coroutine on the loop that read it; where it would wait for a
 // socket - corRestWaitFd, inside a client - the loop's epoll watches it and the coroutine yields
@@ -1484,7 +1484,7 @@ bool corRestCorListen(unsigned short port, int loopCount)
 
 // -----------------------------------------------------------------------------
 //
-// The client's connections - per thread, and MULTIPLEXED (doc/coroutines.md § 6, step 5)
+// The client's connections - per thread, and MULTIPLEXED (coraine doc/cor-protocol.md § 5.3)
 //
 // One connection a peer, shared by every request of the thread: the coroutines of a loop each send
 // theirs and wait - any number in flight - and the responses come back in the order the peer finishes
