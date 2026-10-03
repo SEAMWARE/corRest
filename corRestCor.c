@@ -6,7 +6,7 @@
 // Copyright 2026 Seamware
 // SPDX-License-Identifier: Apache-2.0
 //
-// cor:// - see corRestCor.h, and coraine's doc/cor-protocol.md § 5.
+// cor:// - see corRestCor.h, and coraine's doc/cor-protocol-details.md § 5.
 //
 // A frame: a 16-byte header, then one tree in the cor format.
 //
@@ -466,7 +466,7 @@ static const char* helloCheck(CorNode* helloP, int* namespacesP)
 //
 // ServerConn - a CorConn, plus what a server needs to assemble frames off a non-blocking socket
 //
-// Multiplexed (coraine doc/cor-protocol.md § 5.3): the connection is armed once, for good, and the loop
+// Multiplexed (coraine doc/cor-protocol-details.md § 5.3): the connection is armed once, for good, and the loop
 // reads every frame that comes - a request in, its state of its own (ServerReq), and on to the next;
 // they run at once (inline, or as coroutines of the loop) and their responses go out in the order
 // they finish. Every request's frame is DECODED when it arrives, and every response ENCODED when it
@@ -1484,7 +1484,7 @@ bool corRestCorListen(unsigned short port, int loopCount)
 
 // -----------------------------------------------------------------------------
 //
-// The client's connections - per thread, and MULTIPLEXED (coraine doc/cor-protocol.md § 5.3)
+// The client's connections - per thread, and MULTIPLEXED (coraine doc/cor-protocol-details.md § 5.3)
 //
 // One connection a peer, shared by every request of the thread: the coroutines of a loop each send
 // theirs and wait - any number in flight - and the responses come back in the order the peer finishes
