@@ -395,6 +395,10 @@ void corRestProcessRequest(void)
   if (corRest.out.problemType != NULL && corRest.out.httpStatusCode == 413)
     goto respond;
 
+  // An upgrade the application refused (CorRestUpgradeHook): its error, and nothing else.
+  if (corRest.upgradeRefused == true)
+    goto respond;
+
   // A method outside NGSI-LD's seven verbs (corRestVerbFromString → CorVerbs)
   // splits two ways (§ 6.2.1 + RFC 9110 § 9.3):
   //   - a VALID HTTP method the broker does not use (TRACE, CONNECT) is

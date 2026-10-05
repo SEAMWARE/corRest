@@ -34,6 +34,7 @@ CorRestParamHook       corRestParamHookF        = NULL;
 CorRestPreServiceHook  corRestPreServiceHookF   = preServiceHookNoop;
 CorRestHook            corRestPostResponseHook  = hookNoop;
 CorRestInlineHook      corRestInlineHookF       = NULL;
+CorRestUpgradeHook     corRestUpgradeHookF      = NULL;
 CorRestFinishInlineHook corRestFinishInlineHookF = NULL;
 CorRestCoroutineHook   corRestCoroutineHookF    = NULL;
 CorRestFinishCoroutineHook corRestFinishCoroutineHookF = NULL;
@@ -264,4 +265,15 @@ void corRestSetFinishCoroutineHook(CorRestFinishCoroutineHook fn)
 bool corRestFinishCoroutineAllowed(void)
 {
   return (corRestFinishCoroutineHookF != NULL) && (corRestFinishCoroutineHookF() == true);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestSetUpgradeHook -
+//
+void corRestSetUpgradeHook(CorRestUpgradeHook fn)
+{
+  corRestUpgradeHookF = fn;
 }
