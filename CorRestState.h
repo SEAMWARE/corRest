@@ -81,6 +81,7 @@ typedef struct CorRestState
   // this state; a worker runs corRestProcessRequest off the I/O thread, sets
   // asyncProcessed, and resumes the connection. asyncNext links the FIFO queue.
   bool                    asyncProcessed;
+  bool                upgradeRefused;          // CorRestUpgradeHook refused an upgrade and set the error: no dispatch, just that response
 
   //
   // ...and the SECOND thing a worker does for a request: the post-response

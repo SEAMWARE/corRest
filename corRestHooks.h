@@ -141,6 +141,29 @@ typedef bool (*CorRestFinishCoroutineHook)(void);
 
 // -----------------------------------------------------------------------------
 //
+// CorRestUpgradeHook - a request asks to switch the connection to another protocol (WebSocket, ...)
+//
+// Asked when a request carries an "Upgrade" header, after its headers are in (corRest.in) and before
+// anything else is done with it - no service routine, no worker. 'protocol' is the header's value.
+//
+// To ACCEPT, the application sets the 101 and the protocol's handshake headers (corRestOutHeaderAdd)
+// in corRest.out, and returns the function that takes the socket, with *ctxP for it. Once the 101 is
+// written, the socket leaves the HTTP server: CorRestUpgradeTake is called - on the server's I/O
+// thread - with it, the bytes the client sent behind the request (valid only during the call), and
+// the function that closes it. The socket is the application's from then on, until it calls
+// closeFn(closeArg) - never close() itself: under libmicrohttpd the socket is released through it.
+//
+// To REFUSE, it sets an error (corRestProblem) and returns NULL: the request ends as that response.
+// No hook = an upgrade request is a request like any other.
+//
+typedef void (*CorRestUpgradeClose)(void* closeArg);
+typedef void (*CorRestUpgradeTake)(int fd, const char* extra, int extraLen, CorRestUpgradeClose closeFn, void* closeArg, void* ctx);
+typedef CorRestUpgradeTake (*CorRestUpgradeHook)(const char* protocol, void** ctxP);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
@@ -157,6 +180,7 @@ extern void corRestSetPreServiceHook(CorRestPreServiceHook fn);
 extern void corRestSetServiceInitHook(CorRestServiceInitHook fn);
 extern void corRestSetPostResponseHook(CorRestHook fn);
 extern void corRestSetInlineHook(CorRestInlineHook fn);
+extern void corRestSetUpgradeHook(CorRestUpgradeHook fn);
 extern void corRestSetFinishInlineHook(CorRestFinishInlineHook fn);
 extern void corRestSetCoroutineHook(CorRestCoroutineHook fn);
 extern bool corRestCoroutineAllowed(void);           // the hook's answer for the bound request - false with no hook

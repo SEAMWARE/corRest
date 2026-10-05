@@ -55,6 +55,8 @@
 // it arrived on. MHD needs none of this because MHD owns copies of its own and
 // keeps them until NOTIFY_COMPLETED.
 //
+#include <stdint.h>                              // intptr_t
+#include <unistd.h>                              // close
 #include <stdlib.h>                       // malloc, free
 #include <stdio.h>                        // fprintf
 #include <string.h>                       // memcpy
@@ -75,6 +77,8 @@
 #include "corRest/corRestHooks.h"         // CorRestHook, ...
 #include "corRest/corRestUrlValueEncode.h"  // corRestUrlValueDecode
 #include "corRest/corRestBackend.h"       // Own interface
+
+extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
 
 
 
@@ -218,6 +222,71 @@ static void finishCoroutine(void* arg)
 //
 // httpRequestCb - one complete request, on the event-loop thread
 //
+// -----------------------------------------------------------------------------
+//
+// BuiltinUpgrade - what the upgrade callback needs: the application's function and its context
+//
+typedef struct BuiltinUpgrade
+{
+  CorRestUpgradeTake  take;
+  void*               ctx;
+} BuiltinUpgrade;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// builtinUpgradeClose - the application is done with the socket
+//
+static void builtinUpgradeClose(void* fdP)
+{
+  close((int) (intptr_t) fdP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// builtinUpgradeHand - the 101 is written (corHttpUpgrade): the socket to the application
+//
+static void builtinUpgradeHand(int fd, char* extra, int extraLen, void* cls)
+{
+  BuiltinUpgrade* uP = (BuiltinUpgrade*) cls;
+
+  uP->take(fd, extra, extraLen, builtinUpgradeClose, (void*) (intptr_t) fd, uP->ctx);
+  free(uP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// builtinUpgrade - the 101 with the headers the application set (corRest.out), the socket handed over
+// once it is written. The header strings are corRest's, alive until httpRequestDone - after the write.
+//
+static bool builtinUpgrade(CorHttpConn* connP, CorRestUpgradeTake take, void* ctx)
+{
+  BuiltinUpgrade* uP = (BuiltinUpgrade*) malloc(sizeof(BuiltinUpgrade));
+
+  if (uP == NULL)
+    return false;
+
+  uP->take = take;
+  uP->ctx  = ctx;
+
+  CorRestKeyValue headerV[COR_REST_RESPONSE_HEADERS_MAX];
+  int             headers = corRestResponseHeaderVBuild(headerV, COR_REST_RESPONSE_HEADERS_MAX);
+
+  corHttpResponseStatus(connP, 101);
+  for (int i = 0; i < headers; i++)
+    corHttpResponseHeader(connP, headerV[i].key, headerV[i].value);
+
+  corHttpUpgrade(connP, builtinUpgradeHand, uP);
+  return true;
+}
+
+
+
 static void httpRequestCb(CorHttpConn* connP)
 {
   COR_V("Request: %s %s", connP->method.s, connP->path.s); // one line per request (-v)
@@ -331,6 +400,23 @@ static void httpRequestCb(CorHttpConn* connP)
   }
 
   corRestBodyPolicyCheck(corRest.in.urlPath, corHttpHeader(connP, "Content-Length"));
+
+  //
+  // An upgrade (CorRestUpgradeHook): accepted - the 101, and the socket to the application once it is
+  // written; refused - its error, answered as any response (corRestProcessRequest goes straight to it)
+  //
+  const char* upgrade = (corRestUpgradeHookF != NULL) ? corHttpHeader(connP, "Upgrade") : NULL;
+
+  if (upgrade != NULL)
+  {
+    void*              ctx  = NULL;
+    CorRestUpgradeTake take = corRestUpgradeHookF(upgrade, &ctx);
+
+    if ((take != NULL) && (builtinUpgrade(connP, take, ctx) == true))
+      return;
+
+    corRest.upgradeRefused = true;
+  }
 
   //
   // The body, into the request arena. Released with everything else by

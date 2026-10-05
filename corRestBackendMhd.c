@@ -30,6 +30,8 @@
 #include "corRest/corRestProblem.h"       // COR_REST_ERROR_*, corRestProblem
 #include "corRest/corRestBackend.h"       // Own interface
 
+extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
+
 
 
 // -----------------------------------------------------------------------------
@@ -101,6 +103,91 @@ static enum MHD_Result mhdUriParamIterator
 //   2. Middle calls: upload_data_size > 0 -> accumulate payload
 //   3. Final call:   upload_data_size == 0 -> parse, dispatch, render, respond
 //
+// -----------------------------------------------------------------------------
+//
+// MhdUpgrade - what the upgrade handler needs: the application's function and its context
+//
+typedef struct MhdUpgrade
+{
+  CorRestUpgradeTake  take;
+  void*               ctx;
+} MhdUpgrade;
+
+
+
+// -----------------------------------------------------------------------------
+//
+// mhdUpgradeClose - the application is done with the socket: libmicrohttpd closes it
+//
+static void mhdUpgradeClose(void* urh)
+{
+  MHD_upgrade_action((struct MHD_UpgradeResponseHandle*) urh, MHD_UPGRADE_ACTION_CLOSE);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// mhdUpgradeHandler - the 101 is written: the socket, and the bytes behind the request, to the application
+//
+static void mhdUpgradeHandler
+(
+  void*                             cls,
+  struct MHD_Connection*            connection,
+  void*                             req_cls,
+  const char*                       extra_in,
+  size_t                            extra_in_size,
+  MHD_socket                        sock,
+  struct MHD_UpgradeResponseHandle* urh
+)
+{
+  MhdUpgrade* uP = (MhdUpgrade*) cls;
+
+  (void) connection;
+  (void) req_cls;
+
+  uP->take(sock, extra_in, (int) extra_in_size, mhdUpgradeClose, urh, uP->ctx);
+  free(uP);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// mhdUpgradeQueue - the 101 with the headers the application set (corRest.out), for mhdUpgradeHandler
+//
+static enum MHD_Result mhdUpgradeQueue(struct MHD_Connection* connection, CorRestUpgradeTake take, void* ctx)
+{
+  MhdUpgrade* uP = (MhdUpgrade*) malloc(sizeof(MhdUpgrade));
+
+  if (uP == NULL)
+    return MHD_NO;
+
+  uP->take = take;
+  uP->ctx  = ctx;
+
+  struct MHD_Response* response = MHD_create_response_for_upgrade(mhdUpgradeHandler, uP);
+
+  if (response == NULL)
+  {
+    free(uP);
+    return MHD_NO;
+  }
+
+  CorRestKeyValue headerV[COR_REST_RESPONSE_HEADERS_MAX];
+  int             headers = corRestResponseHeaderVBuild(headerV, COR_REST_RESPONSE_HEADERS_MAX);
+
+  for (int i = 0; i < headers; i++)
+    MHD_add_response_header(response, headerV[i].key, headerV[i].value);
+
+  enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_SWITCHING_PROTOCOLS, response);
+  MHD_destroy_response(response);
+
+  return ret;
+}
+
+
+
 static enum MHD_Result mhdConnectionHandler
 (
   void*                  cls,
@@ -200,6 +287,26 @@ static enum MHD_Result mhdConnectionHandler
 
     *uploadDataSize = 0;
     return MHD_YES;
+  }
+
+  //
+  // --- Final call, an upgrade (CorRestUpgradeHook): accepted - the 101, and the socket to the
+  // application once it is written (mhdUpgradeHandler); refused - its error, as any response ---
+  //
+  if ((corRest.asyncProcessed == false) && (corRestUpgradeHookF != NULL))
+  {
+    const char* upgrade = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Upgrade");
+
+    if (upgrade != NULL)
+    {
+      void*              ctx  = NULL;
+      CorRestUpgradeTake take = corRestUpgradeHookF(upgrade, &ctx);
+
+      if (take != NULL)
+        return mhdUpgradeQueue(connection, take, ctx);
+
+      corRest.upgradeRefused = true;
+    }
   }
 
   // --- Final call: process (off the I/O thread, unless the app's inline hook claims it), respond ---
@@ -352,7 +459,7 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
   //
   // When HTTPS server credentials have been set (a TLS test receiver, not the
   // broker), MHD_USE_TLS is added together with the in-memory key/cert.
-  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME;
+  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME | MHD_ALLOW_UPGRADE;
 
   if ((keyPem != NULL) && (certPem != NULL))
     mhdDaemon = MHD_start_daemon(
