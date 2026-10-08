@@ -71,6 +71,21 @@ void corRestSetPreDispatchHook(CorRestHook fn)
 
 // -----------------------------------------------------------------------------
 //
+// corRestPreDispatchHookGet - the pre-dispatch hook in place (a no-op when none was set)
+//
+// For a second party that needs the same moment - once per dispatched request - without taking it
+// from the first: it keeps what this returns, sets its own hook, and calls the kept one from it.
+// Never NULL.
+//
+CorRestHook corRestPreDispatchHookGet(void)
+{
+  return corRestPreDispatchHook;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestSetPrePayloadParseHook -
 //
 void corRestSetPrePayloadParseHook(CorRestHook fn)

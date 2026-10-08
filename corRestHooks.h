@@ -167,6 +167,7 @@ typedef CorRestUpgradeTake (*CorRestUpgradeHook)(const char* protocol, void** ct
 // Hook setters
 //
 extern void corRestSetPreDispatchHook(CorRestHook fn);
+extern CorRestHook corRestPreDispatchHookGet(void);   // the hook in place, to chain on - never NULL
 //
 // corRestSetPrePayloadParseHook - called right BEFORE the request body is parsed, with the
 // route already resolved (corRest.serviceP) - the place to configure corRest.corJsonP for
