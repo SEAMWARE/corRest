@@ -88,6 +88,7 @@ struct CorRestClientMulti
   int             count;
   int             capacity;
   int             done;
+  int64_t         maxResponseBytes;  // the cap of each response's body (0 = none) - corRestClientMultiMaxResponse
 };
 
 
@@ -145,6 +146,43 @@ CorRestClientMulti* corRestClientMultiCreate(int capacity)
 
   multi->capacity = capacity;
   return multi;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestClientMultiMaxResponse - cap the body of each response (0 = none)
+//
+void corRestClientMultiMaxResponse(CorRestClientMulti* multi, int64_t maxBytes)
+{
+  if (multi != NULL)
+    multi->maxResponseBytes = (maxBytes > 0) ? maxBytes : 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// responseTooLarge - has what is read of a response passed the engine's cap on a body?
+//
+// The body is what follows the header block; until the header block has ended, the bytes read are
+// all header, and a header block of more than 64 KiB on top of the cap counts as too large too.
+// Searched only once the buffer holds more than the cap - below it, nothing can have passed it.
+//
+static bool responseTooLarge(CorRestClientMulti* multi, CorRestClientConn* conn)
+{
+  if ((multi->maxResponseBytes == 0) || (conn->bufLen <= multi->maxResponseBytes))
+    return false;
+
+  const char* endP = (const char*) memmem(conn->buf, conn->bufLen, "\r\n\r\n", 4);
+
+  if (endP == NULL)
+    return conn->bufLen > multi->maxResponseBytes + 65536;
+
+  int64_t bodyBytes = conn->bufLen - ((endP + 4) - conn->buf);
+
+  return bodyBytes > multi->maxResponseBytes;
 }
 
 
@@ -870,6 +908,20 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
           }
 
           conn->bufLen += n;
+
+          //
+          // The cap on a body (corRestClientMultiMaxResponse): passed, the request ends here and the
+          // connection is closed (an error is never pooled) - the rest of the body is not read
+          //
+          if (responseTooLarge(multi, conn))
+          {
+            entry->resp.error = CORR_ERR_TOO_LARGE;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
+                     "response body larger than %lld bytes - not read further", (long long) multi->maxResponseBytes);
+            entry->state = CorrStateDone;
+            multi->done++;
+            break;
+          }
 
           int cr = corRestClientResponseComplete(conn);
           if (cr == 0)
