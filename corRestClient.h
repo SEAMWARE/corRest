@@ -40,6 +40,7 @@
 #define CORR_ERR_TLS            -8
 #define CORR_ERR_TOO_MANY_REDIR -9
 #define CORR_ERR_CLOSED         -10
+#define CORR_ERR_TOO_LARGE      -11   // the response body passed the multi engine's cap (corRestClientMultiMaxResponse)
 
 
 
@@ -237,6 +238,20 @@ extern int                      corRestClientMultiAdd(CorRestClientMulti* multi,
 extern int                      corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs);
 extern CorRestClientResponse*    corRestClientMultiResponse(CorRestClientMulti* multi, int index);
 extern void                     corRestClientMultiDestroy(CorRestClientMulti* multi);
+
+//
+// corRestClientMultiMaxResponse - cap the body each response of the engine may have (0 = none, the default)
+//
+// Checked while the response is read: a body that passes maxBytes ends that request with
+// CORR_ERR_TOO_LARGE, its connection closed and nothing more read from it - so a peer answering
+// with more than the caller can use is not read into memory whole. Call before corRestClientMultiPerform.
+//
+extern void                     corRestClientMultiMaxResponse(CorRestClientMulti* multi, int64_t maxBytes);
+
+//
+// CORREST_CLIENT_MULTI_MAX_RESPONSE - this header has corRestClientMultiMaxResponse and CORR_ERR_TOO_LARGE
+//
+#define CORREST_CLIENT_MULTI_MAX_RESPONSE
 
 
 
