@@ -447,6 +447,17 @@ void corRestHttpLoopsSet(int loops)
 
 // -----------------------------------------------------------------------------
 //
+// corRestBackendLoops - one: libmicrohttpd has no event loop of ours, so the pool runs one queue
+//
+int corRestBackendLoops(void)
+{
+  return 1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // -----------------------------------------------------------------------------
 //
 // corRestBackendStart -

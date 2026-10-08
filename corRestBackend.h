@@ -62,8 +62,24 @@ extern int   corRestBackendStart(unsigned short port, int poolSize, char* keyPem
 extern void  corRestHttpLoopsSet(int loops);
 
 
+
+// -----------------------------------------------------------------------------
+//
+// corRestBackendLoops - how many event loops corRestBackendStart will run
+//
+// Answered BEFORE the start: corRestInit sizes the worker pool off it and starts the pool first,
+// so that no connection is accepted while the pool is down. corRestHttpLoopsSet's value on the
+// built-in server, 1 on libmicrohttpd.
+//
+extern int   corRestBackendLoops(void);
+
+
 //
 // corRestBackendStop - stop serving; called after the worker pool has drained.
+//
+// Start and stop nest: corRestInit starts the worker pool and THEN the backend, corRestStop stops
+// the pool (drained) and THEN the backend - so the pool is up for as long as a connection can be
+// accepted, except in the shutdown window between the two stops.
 //
 extern void  corRestBackendStop(void);
 
@@ -192,10 +208,10 @@ extern int   corRestWorkerPoolStart(int workers);
 //
 // corRestWorkerShardsSet - how many work queues the pool runs
 //
-// Call BEFORE corRestWorkerPoolStart - corRestInit already starts the backend
-// first, so the number of event loops is known by then. One queue per event
-// loop keeps a request on one loop's threads end to end; the default of 1 is
-// what libmicrohttpd wants and leaves that backend unchanged.
+// Call BEFORE corRestWorkerPoolStart - corRestInit does, with corRestBackendLoops,
+// before it starts the pool and then the backend. One queue per event loop keeps
+// a request on one loop's threads end to end; the default of 1 is what
+// libmicrohttpd wants and leaves that backend unchanged.
 //
 // Clamped down to the worker count: more queues than workers would leave one
 // with nobody serving it, and a request landing there would wait for ever.
