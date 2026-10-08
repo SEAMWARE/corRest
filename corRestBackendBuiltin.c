@@ -139,6 +139,20 @@ void corRestHttpLoopsSet(int loops)
 
 // -----------------------------------------------------------------------------
 //
+// corRestBackendLoops - how many event loops corRestBackendStart is going to run
+//
+// Known before the start - it is corRestHttpLoopsSet's value - and corRestInit
+// sizes the worker pool's queues off it (one per loop) before any loop exists.
+//
+int corRestBackendLoops(void)
+{
+  return corHttpLoops;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Hook globals (defined in corRestHooks.c)
 //
 extern CorRestUserDataAllocHook  corRestUserDataAllocHookF;
@@ -723,12 +737,6 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
       return -1;
     }
   }
-
-  //
-  // One work queue per loop. Before corRestWorkerPoolStart, which corRestInit
-  // calls after this function returns.
-  //
-  corRestWorkerShardsSet(corHttpLoops);
 
   corHttpRunning = true;
 

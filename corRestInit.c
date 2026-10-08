@@ -30,7 +30,7 @@
 #include "corRest/corRestHooks.h"         // CorRestHook, etc.
 #include "corRest/corRestProblem.h"       // COR_REST_ERROR_*, corRestProblem
 #include "corRest/corRestParamRegistry.h" // corRestParamLookup
-#include "corRest/corRestBackend.h"       // corRestBackendStart, corRestBackendResume
+#include "corRest/corRestBackend.h"       // corRestBackendStart, corRestBackendLoops, corRestBackendResume
 #include "corRest/corRestInit.h"          // Own interface
 #include "corRest/corRestUrlValueEncode.h"          // corRestUrlValueDecode
 
@@ -970,10 +970,11 @@ static int              corRestWorkerCount = 0;
 //
 // corRestWorkersRun - is the async pool up? Written by the main thread, read by the HTTP threads.
 //
-// The HTTP server starts BEFORE the pool (corRestInit), so its threads are already running when
-// corRestWorkerPoolStart sets up the queues - and this flag is all that tells them the queues
-// are ready. It used to be a `volatile bool`, and volatile orders nothing: the compiler, or a CPU
-// with a weaker memory model than x86 (ARM), may make the flag visible before the queue it is
+// The pool starts BEFORE the HTTP server (corRestInit) and stops before it (corRestStop). The
+// queues are set up by the main thread and used by the HTTP threads, and this flag is what
+// publishes them - and, at shutdown, what tells the HTTP threads, still running, that the pool
+// is going down. It used to be a `volatile bool`, and volatile orders nothing: the compiler, or a
+// CPU with a weaker memory model than x86 (ARM), may make the flag visible before the queue it is
 // guarding - a race detector (drd) reports exactly that. So it is published with a RELEASE store
 // once the queues are set, and read with ACQUIRE loads: a thread that sees true sees the queues.
 //
@@ -987,9 +988,8 @@ static inline bool workersRun(void) { return __atomic_load_n(&corRestWorkersRun,
 //
 // corRestWorkerShardsSet - how many work queues to run
 //
-// Called by the backend BEFORE corRestWorkerPoolStart, which is the order
-// corRestInit already uses: the backend starts first, so by the time the pool
-// is built the number of loops is known. Clamped rather than refused.
+// Called BEFORE corRestWorkerPoolStart - corRestInit passes corRestBackendLoops,
+// which the backend knows before it starts. Clamped rather than refused.
 //
 void corRestWorkerShardsSet(int shards)
 {
@@ -1213,10 +1213,15 @@ bool corRestAsyncPoolUp(void)
 static _Atomic uint64_t dispatchInline    = 0;
 static _Atomic uint64_t dispatchHandedOff = 0;
 
+// (*) The pool is down only during shutdown: corRestStop stops it (corRestWorkerPoolStop clears
+//     corRestWorkersRun first) before it stops the backend, and a request arriving in between runs
+//     inline. At start-up the pool is up before the backend accepts its first connection
+//     (corRestInit), so every request served is counted.
+//
 bool corRestAsyncDispatch(void)
 {
   if (corRestAsyncPoolUp() == false)
-    return false;                                     // pool down: inline, and not counted - no choice was made
+    return false;                                     // pool down: inline, and not counted - no choice was made (*)
 
   if ((corRestInlineHookF != NULL) && (corRestInlineHookF() == true))
   {
@@ -1555,17 +1560,28 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
   }
 
   //
+  // Async worker pool — one worker per I/O thread, one queue per event loop.
+  //
+  // BEFORE the HTTP server: the server accepts connections the moment it starts, and a request
+  // that arrived while the pool was still down ran on the I/O thread whatever it was (a forward
+  // to a context source included) and was counted neither inline nor handed off.
+  //
+  corRestWorkerShardsSet(corRestBackendLoops());
+
+  if (corRestWorkerPoolStart(poolSize) != 0)
+  {
+    fprintf(stderr, "corRestInit: async worker pool failed to start\n");
+    corRestWorkerPoolStop();                          // joins the workers that did start
+    return -1;
+  }
+
+  //
   // The HTTP server itself - libmicrohttpd or the built-in one, decided at
   // compile time by COR_HTTP_SERVER. It starts its own threads and returns.
   //
   if (corRestBackendStart(port, poolSize, httpsServerKey, httpsServerCert) != 0)
-    return -1;
-
-  // Async worker pool — one worker per I/O thread. corRestWorkersRun stays false
-  // (handler processes inline) if the pool fails to start.
-  if (corRestWorkerPoolStart(poolSize) != 0)
   {
-    fprintf(stderr, "corRestInit: async worker pool failed to start\n");
+    corRestWorkerPoolStop();                          // nothing was accepted - nothing is queued
     return -1;
   }
 
