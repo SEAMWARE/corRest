@@ -235,7 +235,11 @@ static int buildSendBuf(CorrMultiEntry* entry)
   const char* verbStr  = corRestVerbToString(req->verb);
   int bodyLen          = req->bodyLen;
 
-  int estimate = 512;
+  //
+  // The request line holds the path (with its query), the Host header the host: both counted, or a
+  // path of a few hundred characters does not fit
+  //
+  int estimate = 512 + (int) strlen(req->path) + (int) strlen(req->host) + (int) strlen(corRestClientUserAgent);
   for (int i = 0; i < req->headerCount; i++)
     estimate += (int)strlen(req->headerV[i].key) + (int)strlen(req->headerV[i].value) + 4;
   estimate += bodyLen;
