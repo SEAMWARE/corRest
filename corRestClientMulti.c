@@ -1035,8 +1035,7 @@ void corRestClientMultiDestroy(CorRestClientMulti* multi)
     if (entry->resp.headerV != entry->resp.headers)
       free(entry->resp.headerV);
 
-    if (entry->req.headerV != entry->req.headers)
-      free(entry->req.headerV);
+    corRestClientRequestCleanup(&entry->req);   // the header vector, if malloc'd - not an allocator's
 
     if (entry->conn != NULL)
     {
