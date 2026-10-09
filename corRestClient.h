@@ -134,6 +134,13 @@ typedef struct CorRestClientRequest
 //
 // CorRestClientResponse - response from server
 //
+// statusText, the header names and values, and body point into the response's OWN copy of what was
+// read (buf), not into the connection's receive buffer: the connection goes back to the pool, or is
+// closed, before the caller reads the response. The copy is taken from the request's allocator, and
+// lives as long as the allocator; without one it is malloc'd and released by
+// corRestClientResponseCleanup (corRestClientMultiDestroy for a response of the multi engine).
+// body is zero-terminated.
+//
 typedef struct CorRestClientResponse
 {
   int               statusCode;
@@ -150,6 +157,9 @@ typedef struct CorRestClientResponse
 
   int               error;
   char              errorDetail[256];
+
+  char*             buf;           // the response's copy of what was read - malloc'd only when bufMalloced
+  bool              bufMalloced;
 } CorRestClientResponse;
 
 
@@ -219,8 +229,9 @@ extern const char* corRestClientResponseHeader(CorRestClientResponse* resp, cons
 // corRestClientResponseCleanup - release a completed response's heap-owned parts
 //
 // Frees the response header vector if the parser grew it beyond the inline
-// array. Body/statusText point into the connection buffer and are NOT freed
-// here. Idempotent; call once per completed corRestClientSend.
+// array, and the response's copy of what was read when it was malloc'd (a request
+// with no allocator) - statusText, the headers and body are not to be read after
+// it. Idempotent; call once per completed corRestClientSend.
 //
 extern void  corRestClientResponseCleanup(CorRestClientResponse* resp);
 

@@ -934,9 +934,9 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
             }
             else
             {
-              entry->resp.error = CORR_ERR_PARSE;
+              entry->resp.error = (pr == -2) ? CORR_ERR_ALLOC : CORR_ERR_PARSE;
               snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail),
-                       "Failed to parse response");
+                       (pr == -2) ? "Failed to allocate the response" : "Failed to parse response");
               entry->state = CorrStateDone;
               multi->done++;
             }
@@ -1032,8 +1032,7 @@ void corRestClientMultiDestroy(CorRestClientMulti* multi)
 
     free(entry->sendBuf);
 
-    if (entry->resp.headerV != entry->resp.headers)
-      free(entry->resp.headerV);
+    corRestClientResponseCleanup(&entry->resp);  // the header vector and the response's copy, if malloc'd
 
     corRestClientRequestCleanup(&entry->req);   // the header vector, if malloc'd - not an allocator's
 

@@ -659,7 +659,12 @@ static int corRestClientSendOnce(CorRestClientRequest* req, CorRestClientRespons
   }
 
   int parseResult = corRestClientParseResponse(conn, resp, req->allocP);
-  if (parseResult != 0)
+  if (parseResult == -2)
+  {
+    setError(resp, CORR_ERR_ALLOC, "Failed to allocate the response");
+    return CORR_ERR_ALLOC;
+  }
+  else if (parseResult != 0)
   {
     setError(resp, CORR_ERR_PARSE, "Malformed HTTP response");
     return CORR_ERR_PARSE;
@@ -754,12 +759,13 @@ static void connDestroy(CorRestClientConn* conn)
 
 // -----------------------------------------------------------------------------
 //
-// corRestClientSend - Send request, receive response (with redirects and pooling)
+// sendFollow - Send request, receive response (with redirects and pooling)
 //
-int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
+// A redirect's Location is in the response, which the next attempt replaces: the URL is copied to
+// *redirectUrlP first (malloc'd, freed by corRestClientSend).
+//
+static int sendFollow(CorRestClientRequest* req, CorRestClientResponse* resp, char** redirectUrlP)
 {
-  responseInit(resp);
-
   int s = urlParse(req);
   if (s != 0)
   {
@@ -801,6 +807,7 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
           return CORR_ERR_CONNECT;
         }
 
+        corRestClientResponseCleanup(resp);
         responseInit(resp);
         s = corRestClientSendOnce(req, resp, conn);
         if (s != 0)
@@ -847,7 +854,20 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
         req->bodyJson = NULL;
       }
 
-      req->url = (char*)location;
+      char* url = strdup(location);
+      if (url == NULL)
+      {
+        setError(resp, CORR_ERR_ALLOC, "Failed to allocate the redirect URL");
+        return CORR_ERR_ALLOC;
+      }
+
+      free(*redirectUrlP);
+      *redirectUrlP = url;
+
+      corRestClientResponseCleanup(resp);
+      responseInit(resp);
+
+      req->url = url;
       s = urlParse(req);
       if (s != 0)
       {
@@ -857,7 +877,6 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
 
       isTls = (strcmp(req->scheme, "https") == 0) ? true : false;
 
-      responseInit(resp);
       continue;
     }
 
@@ -872,6 +891,34 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
   // No auto-parse of JSON responses - caller can parse manually if needed
 
   return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestClientSend - Send request, receive response (with redirects and pooling)
+//
+// After a redirect, req->url is the request's own URL again - the last Location was a copy that is
+// freed here.
+//
+int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
+{
+  char* url         = req->url;
+  char* redirectUrl = NULL;
+
+  responseInit(resp);
+
+  int s = sendFollow(req, resp, &redirectUrl);
+
+  if (redirectUrl != NULL)
+  {
+    req->url = url;
+    urlParse(req);
+    free(redirectUrl);
+  }
+
+  return s;
 }
 
 
@@ -903,12 +950,10 @@ const char* corRestClientResponseHeader(CorRestClientResponse* resp, const char*
 //
 // corRestClientResponseCleanup - release the response's heap-owned parts
 //
-// The response body and statusText point into the connection's own receive
-// buffer (owned by the connection, not the response), so only the header vector
-// needs releasing — and only when it outgrew the inline 'headers' array and was
-// malloc'd. Idempotent. Call once per completed corRestClientSend, regardless of
-// whether the request used an arena (the parser mallocs the grown header vector
-// unconditionally).
+// The header vector, when it outgrew the inline 'headers' array and was malloc'd
+// (the parser mallocs a grown vector whether or not the request has an allocator),
+// and the response's copy of what was read, when it was malloc'd (a request with no
+// allocator). Idempotent. Call once per completed corRestClientSend.
 //
 void corRestClientResponseCleanup(CorRestClientResponse* resp)
 {
@@ -922,4 +967,11 @@ void corRestClientResponseCleanup(CorRestClientResponse* resp)
     resp->headerSize = COR_REST_INITIAL_KV_SLOTS;
     resp->headerCount = 0;
   }
+
+  if (resp->bufMalloced == true)
+  {
+    free(resp->buf);
+    resp->bufMalloced = false;
+  }
+  resp->buf = NULL;
 }

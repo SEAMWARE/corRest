@@ -17,6 +17,7 @@
 
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientResponse
 #include "corAlloc/CorAlloc.h"                   // CorAlloc
+#include "corAlloc/corAlloc.h"                   // corAlloc
 
 
 
@@ -392,12 +393,67 @@ static int dechunk(char* buf, int len, int* outLen)
 
 // -----------------------------------------------------------------------------
 //
+// rebase - the same position in the response's copy as in the connection's buffer
+//
+static inline char* rebase(char* p, char* from, char* to)
+{
+  return (p == NULL) ? NULL : to + (p - from);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// responseDetach - the parsed response moved off the connection's buffer, onto a copy of its own
+//
+// Everything the parser hands out (statusText, the header names and values, body) points into
+// conn->buf, and the connection is the pool's again - or closed and freed - before the caller reads
+// the response. One copy of what was read, the pointers rebased onto it. From the allocator when the
+// request has one, malloc'd otherwise (released by corRestClientResponseCleanup). The body is
+// zero-terminated in the copy: it ends where what was read ends at the latest, and the copy is one
+// byte longer than that.
+//
+static int responseDetach(CorRestClientConn* conn, CorRestClientResponse* resp, CorAlloc* allocP)
+{
+  int   len  = conn->bufLen;
+  char* from = conn->buf;
+  char* to   = (allocP != NULL) ? corAlloc(allocP, len + 1) : (char*) malloc(len + 1);
+
+  if (to == NULL)
+    return -2;
+
+  memcpy(to, from, len);
+  to[len] = 0;
+
+  resp->statusText = rebase(resp->statusText, from, to);
+  resp->body       = rebase(resp->body,       from, to);
+
+  for (int i = 0; i < resp->headerCount; i++)
+  {
+    resp->headerV[i].key   = rebase(resp->headerV[i].key,   from, to);
+    resp->headerV[i].value = rebase(resp->headerV[i].value, from, to);
+  }
+
+  if (resp->body != NULL)
+    resp->body[resp->bodyLen] = 0;
+
+  resp->buf         = to;
+  resp->bufMalloced = (allocP == NULL);
+
+  return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestClientParseResponse - Parse HTTP response from conn->buf (destructive)
+//
+// 0: parsed, and the response on a copy of its own (responseDetach); 1: incomplete; -1: malformed;
+// -2: out of memory for the copy.
 //
 int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* resp, CorAlloc* allocP)
 {
-  (void) allocP;
-
   char* buf = conn->buf;
   int   len = conn->bufLen;
   char* p   = buf;
@@ -487,5 +543,5 @@ int corRestClientParseResponse(CorRestClientConn* conn, CorRestClientResponse* r
     }
   }
 
-  return 0;
+  return responseDetach(conn, resp, allocP);
 }
