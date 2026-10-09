@@ -796,6 +796,12 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
 
         case CorrStateReading:
         {
+          //
+          // Over TLS, one read may leave bytes OpenSSL has already taken off the socket and decrypted
+          // (SSL_pending): the socket then never becomes readable again for them, and epoll would wait for
+          // the timeout. So, while the response is incomplete and OpenSSL holds more, read again here.
+          //
+        readMore:
           if (conn->bufSize - conn->bufLen < 4096)
           {
             int newSize = conn->bufSize * 2;
@@ -953,6 +959,8 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
             entry->state = CorrStateDone;
             multi->done++;
           }
+          else if ((conn->ssl != NULL) && (corRestClientTlsPending(conn) > 0))
+            goto readMore;
           break;
         }
 
