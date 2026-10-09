@@ -59,7 +59,8 @@
 #include <unistd.h>                              // close
 #include <stdlib.h>                       // malloc, free
 #include <stdio.h>                        // fprintf
-#include <string.h>                       // memcpy
+#include <string.h>                       // memcpy, strerror
+#include <errno.h>                        // errno
 #include <pthread.h>                      // pthread_create
 #include <time.h>                         // clock_gettime
 
@@ -101,9 +102,9 @@ extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
 // against 89.0 on a small response. The deficit was never cost, it was
 // under-utilisation.
 //
-// So: N loops, each with its own listen socket on the same port (SO_REUSEPORT),
-// its own epoll, its own connection pool and its own resume queue. The kernel
-// hashes each incoming connection to one of them and it stays there for its
+// So: N loops, each with its own epoll, its own connection pool and its own
+// resume queue. The first one listens, accepts every connection and deals them
+// out in turn (corHttpAcceptShare); a connection stays with its loop for its
 // whole life, so the one-connection-one-writer invariant is preserved exactly.
 //
 // Default 1 - today's behaviour, byte for byte - until there are suite runs and
@@ -661,11 +662,19 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
   if (perLoop < 16)          // a loop with almost no slots is worse than fewer loops
     perLoop = 16;
 
+  //
+  // The first loop alone listens: it accepts every connection and deals them out (corHttpAcceptShare
+  // below), so the others need no listen socket (noListener) and the port no SO_REUSEPORT - a second
+  // process on the port fails to start (EADDRINUSE) instead of being handed part of the connections.
+  //
+  CorHttpListenOptions listenOptions = { NULL, false, false };
+  CorHttpListenOptions handedOptions = { NULL, false, true };
+
   for (int ix = 0; ix < corHttpLoops; ix++)
   {
-    if (corHttpInit(&corHttpServerV[ix], port, perLoop, httpRequestCb) != CorHttpOk)
+    if (corHttpInitOptions(&corHttpServerV[ix], port, (ix == 0) ? &listenOptions : &handedOptions, perLoop, httpRequestCb) != CorHttpOk)
     {
-      fprintf(stderr, "corRestInit: the built-in HTTP server failed to listen on port %d\n", port);
+      fprintf(stderr, "corRestInit: the built-in HTTP server failed to listen on port %d: %s\n", port, strerror(errno));
 
       // Undo the ones that did come up - a half-listening server is not a server.
       for (int done = 0; done < ix; done++)
