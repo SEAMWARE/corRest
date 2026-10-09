@@ -222,3 +222,19 @@ $(OBJDIR)/%.o: %.c $(FLAGSTAMP)
 						$(CC) $(CFLAGS) -c $^ -E > $@
 
 -include $(LIB_DEPS)
+
+#
+# clientLifetimeTest - the lifetime of a client response (test/clientLifetime). Built with
+# AddressSanitizer in its own object directory, and run:
+#
+#   make clientLifetimeTest
+#
+LIFETIME_FLAGS = BUILD=asan EXTRA_CFLAGS="-fsanitize=address -fno-omit-frame-pointer -O1"
+
+clientLifetimeTest:
+						$(MAKE) $(LIFETIME_FLAGS) obj/asan/$(LIB)
+						$(CC) -g -fsanitize=address -fno-omit-frame-pointer $(INCLUDE) -o obj/asan/clientLifetimeTest \
+						  test/clientLifetime/clientLifetimeTest.c obj/asan/$(LIB) $(LIBS)
+						obj/asan/clientLifetimeTest
+
+.PHONY: clientLifetimeTest

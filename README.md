@@ -90,6 +90,12 @@ const char* corRestClientResponseHeader(CorRestClientResponse* resp, const char*
 
 A default per-request timeout is exposed as `int corRestClientDefaultRequestTimeoutMs`.
 
+A response holds its own copy of what was read: its status text, headers and body
+stay valid after the connection has gone back to the pool or been closed. The copy
+comes from the request's allocator and lives as long as it; without an allocator it
+is malloc'd and released by `corRestClientResponseCleanup` (`corRestClientMultiDestroy`
+for a response of the multi engine). The body is zero-terminated.
+
 ### Parallel multi-client
 
 ```c
@@ -137,6 +143,7 @@ int main(void)
 make            # build libcorRest.a (+ .so) and the test binary
 make ci         # clean + install
 make di         # debug + install
+make clientLifetimeTest   # the lifetime of a client response, under AddressSanitizer
 ```
 
 `libcorRest.a` links statically into its consumers. Sibling repos must be
