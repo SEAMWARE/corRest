@@ -228,6 +228,18 @@ extern void  corRestClientResponseCleanup(CorRestClientResponse* resp);
 
 // -----------------------------------------------------------------------------
 //
+// corRestClientRequestCleanup - release a request's heap-owned parts
+//
+// Frees the request header vector if it outgrew the inline array in a request with no allocator (the
+// vector was malloc'd then; with an allocator it goes with the allocator). Idempotent; call once the
+// request has been sent - needed only for a request initialised with a NULL allocator.
+//
+extern void  corRestClientRequestCleanup(CorRestClientRequest* req);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // Multi (concurrent requests)
 //
 extern CorRestClientMulti*       corRestClientMultiCreate(int capacity);

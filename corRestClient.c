@@ -194,7 +194,14 @@ void corRestClientRequestHeader(CorRestClientRequest* req, const char* name, con
       return;
 
     memcpy(newV, req->headerV, req->headerCount * sizeof(CorRestKeyValue));
-    if (req->headerV != req->headers)
+
+    //
+    // The old vector is freed only if it was malloc'd: the inline one is part of the request, and one
+    // taken from the allocator goes with the allocator. free() of an allocator's chunk is an invalid
+    // free - a request with more than 15 headers (a registration's contextSourceInfo becomes headers
+    // of every forwarded request) took the broker down.
+    //
+    if ((req->headerV != req->headers) && (req->allocP == NULL))
       free(req->headerV);
 
     req->headerV   = newV;
@@ -204,6 +211,26 @@ void corRestClientRequestHeader(CorRestClientRequest* req, const char* name, con
   req->headerV[req->headerCount].key  = (char*)name;
   req->headerV[req->headerCount].value = (char*)value;
   req->headerCount++;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestClientRequestCleanup - release a request's heap-owned parts: the header vector, when it outgrew
+// the inline one and the request has no allocator (then it was malloc'd). Idempotent.
+//
+void corRestClientRequestCleanup(CorRestClientRequest* req)
+{
+  if (req == NULL)
+    return;
+
+  if ((req->headerV != NULL) && (req->headerV != req->headers) && (req->allocP == NULL))
+    free(req->headerV);
+
+  req->headerV     = req->headers;
+  req->headerSize  = COR_REST_INITIAL_KV_SLOTS;
+  req->headerCount = 0;
 }
 
 

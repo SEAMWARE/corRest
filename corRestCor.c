@@ -1546,6 +1546,44 @@ static __thread MuxConn* clientConnV[CLIENT_CONNS_MAX];
 
 // -----------------------------------------------------------------------------
 //
+// clientConnsRelease - close and free the ending thread's client connections (a pthread key destructor)
+//
+// They are thread-local, so nothing else can reach them once the thread is gone: each one left behind
+// is a MuxConn with its 16 KB read buffer, the code tables, and an open socket - which keeps the peer's
+// end, and the peer's thread serving it, open as well. Threads that end are not only the broker's at
+// shutdown: a cor:// connection's dedicated thread ends with its connection, and the HTTP server's
+// connection threads run post-response work (the source-identity probe of a new registration) that
+// forwards over cor://.
+//
+static pthread_key_t  clientConnsKey;
+static pthread_once_t clientConnsKeyOnce = PTHREAD_ONCE_INIT;
+
+static void clientConnsRelease(void* unused)
+{
+  (void) unused;
+
+  for (int i = 0; i < CLIENT_CONNS_MAX; i++)
+  {
+    MuxConn* mP = clientConnV[i];
+
+    if (mP == NULL)
+      continue;
+
+    connClose(&mP->conn);
+    free(mP);
+    clientConnV[i] = NULL;
+  }
+}
+
+static void clientConnsKeyCreate(void)
+{
+  pthread_key_create(&clientConnsKey, clientConnsRelease);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // nowMs - CLOCK_MONOTONIC
 //
 static long long nowMs(void)
@@ -1833,6 +1871,13 @@ static MuxConn* muxGet(const char* host, const char* port, int timeoutMs, bool* 
         cP->conn.fd    = -1;
         clientConnV[i] = cP;
         freeP          = cP;
+
+        //
+        // The thread has a connection to release when it ends - a non-NULL value is what makes the
+        // key's destructor run
+        //
+        pthread_once(&clientConnsKeyOnce, clientConnsKeyCreate);
+        pthread_setspecific(clientConnsKey, clientConnV);
       }
       continue;
     }
