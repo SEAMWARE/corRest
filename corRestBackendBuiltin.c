@@ -66,12 +66,12 @@
 
 #include "corAlloc/corAlloc.h"            // corAlloc
 #include "corAlloc/corAllocStrdup.h"      // corAllocStrdup
-#include "corLog/corLog.h"                // COR_V
+#include "corLog/corLog.h"                // COR_V, COR_W
 
 #include "corHttp/CorHttp.h"              // CorHttpServer, CorHttpConn
 
 #include "corBase/corCo.h"                       // corCoCreate
-#include "corBase/corCoLoop.h"                   // corCoLoopResume
+#include "corBase/corCoLoop.h"                   // corCoLoopResume, corCoLoopCancel, corCoLoopPending, corCoLoopExpire
 #include "corRest/corRestWait.h"                 // corRestCoLoopInit
 #include "corRest/CorRestState.h"         // CorRestState, corRest
 #include "corRest/corRestStateInit.h"     // corRestStateInit, corRestUrlPathNormalize
@@ -602,6 +602,40 @@ void corRestBackendResume(CorRestState* stateP)
 
 // -----------------------------------------------------------------------------
 //
+// coroutinesEnd - the loop has stopped: its coroutines run to their end, their waits cancelled
+//
+// A request or post-response phase that runs as a coroutine of this loop may be waiting - for a
+// Context Source to connect, a notification's endpoint to answer, a lookup - when the loop stops.
+// Left there, it is never resumed: its request state, its coroutine and whatever it holds on its stack
+// (an address list, a connection) are never freed. Cancelled instead (corCoLoopCancel), every wait it is
+// in, or comes to, fails at once: it runs its failure path - a forward that failed, a notification that
+// failed - to its end, answers its request if it has one, and frees what it holds, as at any failure.
+//
+// The workers are done by now (corRestStop drained them first). Then the connections still holding a
+// request (a response not all written) are closed - their doneCb ends the request, which may start a
+// post-response coroutine - and that one is run to its end too.
+//
+static void coroutinesEnd(CorHttpServer* serverP)
+{
+  corCoLoopCancel();
+
+  for (int round = 0; round < 2; round++)
+  {
+    while ((coRunning > 0) && (corCoLoopPending() == true))
+      corCoLoopExpire();
+
+    if (round == 0)
+      corHttpServeEnd(serverP);
+  }
+
+  if (coRunning > 0)
+    COR_W("built-in HTTP server: %d request(s) never ended at the stop - their state is not freed", coRunning);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // serveThread -
 //
 static void* serveThread(void* serverP)
@@ -612,6 +646,7 @@ static void* serveThread(void* serverP)
   corRestCoLoopInit(((CorHttpServer*) serverP)->epollFd);
 
   corHttpServe((CorHttpServer*) serverP);
+  coroutinesEnd((CorHttpServer*) serverP);
   return NULL;
 }
 

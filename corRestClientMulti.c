@@ -11,7 +11,7 @@
 
 #include <stdio.h>                               // snprintf
 #include <stdlib.h>                              // calloc, malloc, free, atoi
-#include <string.h>                              // memset, memcmp, memcpy, strlen, strcmp, strncmp
+#include <string.h>                              // memset, memcmp, memcpy, strlen, strcmp, strncmp, strerror
 #include <stdbool.h>                             // bool, true, false
 #include <unistd.h>                              // close, read, write
 #include <errno.h>                               // errno
@@ -669,7 +669,33 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
     //
     int nev;
     if (corCoCurrent() != NULL)
-      nev = (corRestWaitFd(epollFd, POLLIN, waitMs, NULL) > 0) ? epoll_wait(epollFd, events, 64, 0) : 0;
+    {
+      int w = corRestWaitFd(epollFd, POLLIN, waitMs, NULL);
+
+      //
+      // -1: no wait is to be had - the loop is stopping (ECANCELED, corCoLoopCancel) or the wait itself
+      // failed. Waiting again would fail again, at once, round after round until the deadline: every
+      // request still open ends here
+      //
+      if (w < 0)
+      {
+        for (int i = 0; i < multi->count; i++)
+        {
+          CorrMultiEntry* entry = &multi->entries[i];
+
+          if (entry->state != CorrStateDone)
+          {
+            entry->resp.error = CORR_ERR_RECV;
+            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "No wait for the response: %s", strerror(errno));
+            entry->state = CorrStateDone;
+            multi->done++;
+          }
+        }
+        break;
+      }
+
+      nev = (w > 0) ? epoll_wait(epollFd, events, 64, 0) : 0;
+    }
     else
       nev = epoll_wait(epollFd, events, 64, waitMs);
 
