@@ -2260,9 +2260,21 @@ bool corRestCorWait(CorRestCorCall* callP, CorRestCorResponse* respP, const char
     //
     mP->reading = true;
 
-    bool ready = (mP->conn.rpos < mP->conn.rlen) || (corRestWaitFd(mP->conn.fd, POLLIN, remaining, NULL) > 0);
+    int  w     = (mP->conn.rpos < mP->conn.rlen) ? 1 : corRestWaitFd(mP->conn.fd, POLLIN, remaining, NULL);
+    bool ready = (w > 0);
 
     corRestP = savedP;
+
+    //
+    // -1: no wait is to be had - the loop is stopping (ECANCELED, corCoLoopCancel) or the wait itself
+    // failed. Waiting again would fail again, at once, until the deadline: the connection's calls end here
+    //
+    if (w < 0)
+    {
+      mP->reading = false;
+      muxFail(mP, "no wait for the response");
+      break;
+    }
 
     //
     // Ready: the bytes into the buffer now - connRead would otherwise find it empty and wait a second time
