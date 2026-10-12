@@ -75,6 +75,7 @@ extern CorRestHook            corRestPayloadParseHook;
 extern CorRestHook            corRestPayloadRenderHook;
 extern CorRestParamHook       corRestParamHookF;
 extern CorRestPreServiceHook  corRestPreServiceHookF;
+extern CorRestPreServiceHook  corRestAdmitHookF;
 extern CorRestServiceInitHook corRestServiceInitHookF;
 extern CorRestHook            corRestPostResponseHook;
 extern CorRestInlineHook      corRestInlineHookF;
@@ -424,6 +425,13 @@ void corRestProcessRequest(void)
     // 207 entries instead of a global 400). serviceP may stay NULL here; the
     // 404/405 handling below still runs in that case.
     corRest.serviceP = corRestServiceLookup(&corRestServiceV[corRest.in.verb]);
+
+  //
+  // Admission (corRestSetAdmitHook) - before anything is done for the request: a client that is not
+  // let in learns nothing from a 404/405/415 and costs no parse
+  //
+  if ((corRestAdmitHookF != NULL) && (corRest.selfForwardDepth == 0) && (corRestAdmitHookF() == false))
+    goto respond;
 
   // § 6.3.4 — Unsupported Media Type. POST / PATCH / PUT on a body-bearing
   // NGSI-LD endpoint with a Content-Type that isn't application/json or
