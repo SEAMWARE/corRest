@@ -81,6 +81,7 @@ LIB_SOURCES   = corRestInit.c           \
                 $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
                 corRestStop.c           \
+                corRestInHeader.c       \
                 corRestStateInit.c      \
                 corRestServiceLookup.c  \
                 corRestVerbFromString.c \
