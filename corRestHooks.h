@@ -178,6 +178,15 @@ extern void corRestSetPayloadParseHook(CorRestHook fn);
 extern void corRestSetPayloadRenderHook(CorRestHook fn);
 extern void corRestSetParamHook(CorRestParamHook fn);
 extern void corRestSetPreServiceHook(CorRestPreServiceHook fn);
+//
+// corRestSetAdmitHook - is the request let in at all: called once the route is looked up
+// (corRest.serviceP, NULL when none matched) and BEFORE anything is done for it - no 415, no body
+// parsed, no parse hook (which may download an @context). false: the response is the error the hook
+// set (corRestProblem), and nothing else runs. Not called for an in-process forward
+// (selfForwardDepth > 0) - its request was let in when it arrived. NULL (the default): every
+// request is let in.
+//
+extern void corRestSetAdmitHook(CorRestPreServiceHook fn);
 extern void corRestSetServiceInitHook(CorRestServiceInitHook fn);
 extern void corRestSetPostResponseHook(CorRestHook fn);
 extern void corRestSetInlineHook(CorRestInlineHook fn);

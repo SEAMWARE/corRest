@@ -32,6 +32,7 @@ CorRestHook            corRestPayloadParseHook  = hookNoop;
 CorRestHook            corRestPayloadRenderHook = hookNoop;
 CorRestParamHook       corRestParamHookF        = NULL;
 CorRestPreServiceHook  corRestPreServiceHookF   = preServiceHookNoop;
+CorRestPreServiceHook  corRestAdmitHookF        = NULL;
 CorRestHook            corRestPostResponseHook  = hookNoop;
 CorRestInlineHook      corRestInlineHookF       = NULL;
 CorRestUpgradeHook     corRestUpgradeHookF      = NULL;
@@ -135,6 +136,17 @@ void corRestSetParamHook(CorRestParamHook fn)
 void corRestSetPreServiceHook(CorRestPreServiceHook fn)
 {
   corRestPreServiceHookF = (fn != NULL) ? fn : preServiceHookNoop;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestSetAdmitHook -
+//
+void corRestSetAdmitHook(CorRestPreServiceHook fn)
+{
+  corRestAdmitHookF = fn;
 }
 
 
