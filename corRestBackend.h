@@ -65,6 +65,18 @@ extern void  corRestHttpLoopsSet(int loops);
 
 // -----------------------------------------------------------------------------
 //
+// corRestConnectionMemorySet - libmicrohttpd's memory per connection, in kB (0: its own default, 32 kB)
+//
+// LIBMICROHTTPD ONLY, a no-op on the built-in server. Call it before corRestInit. A request whose line and
+// headers do not fit it is refused by libmicrohttpd itself - 414 (the URL) or 431 (the headers) - and said
+// in the log once per refusal, with what to do about it.
+//
+extern void  corRestConnectionMemorySet(int kb);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestBackendLoops - how many event loops corRestBackendStart will run
 //
 // Answered BEFORE the start: corRestInit sizes the worker pool off it and starts the pool first,

@@ -18,6 +18,7 @@
 #include <string.h>                       // memcpy, strncmp
 #include <stdio.h>                        // fprintf
 #include <time.h>                         // clock_gettime
+#include <stdarg.h>                       // va_list
 
 #include <microhttpd.h>
 
@@ -431,6 +432,79 @@ void corRestBackendResume(CorRestState* stateP)
 
 
 //
+// The connection memory - libmicrohttpd's per-connection pool, that holds a request's line and headers,
+// MHD's own header table and the response's headers; a body passes through it in pieces. 0: not set -
+// libmicrohttpd's own default (32 kB). MHD zeroes the whole pool at the end of every request, so its size is
+// a cost on every request (doc/performance.md, "The HTTP server's connection memory").
+//
+static size_t connectionMemory = 0;
+
+
+
+//
+// corRestConnectionMemorySet -
+//
+void corRestConnectionMemorySet(int kb)
+{
+  connectionMemory = (kb > 0) ? (size_t) kb * 1024 : 0;
+}
+
+
+
+//
+// mhdLog - libmicrohttpd's messages: one is said, the refusal of a request whose line and headers do not
+// fit the connection memory - MHD answers it itself (414 / 431) before the request reaches us, so this is
+// the only place it can be seen. Every other message is dropped, as before there was a logger. Said at most
+// once a second, with how many more since: a client that keeps sending too much must not fill the log.
+//
+static time_t  mhdLogSaidAt = 0;
+static int     mhdLogUnsaid = 0;
+
+static void mhdLog(void* cls, const char* fmt, va_list ap)
+{
+  char        line[256];
+  const char* codeP;
+
+  (void) cls;
+
+  vsnprintf(line, sizeof(line), fmt, ap);
+
+  codeP = strstr(line, "HTTP response code is ");
+  if (codeP == NULL)
+    return;
+
+  int code = atoi(&codeP[22]);
+
+  if ((code != 414) && (code != 431))
+    return;
+
+  time_t now  = time(NULL);
+  time_t last = __atomic_load_n(&mhdLogSaidAt, __ATOMIC_RELAXED);
+
+  if ((now == last) || (__atomic_compare_exchange_n(&mhdLogSaidAt, &last, now, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED) == false))
+  {
+    __atomic_add_fetch(&mhdLogUnsaid, 1, __ATOMIC_RELAXED);   // said already this second (or by another thread now)
+    return;
+  }
+
+  int  unsaid = __atomic_exchange_n(&mhdLogUnsaid, 0, __ATOMIC_RELAXED);
+  char more[64] = "";
+
+  if (unsaid != 0)
+    snprintf(more, sizeof(more), " (and %d more since the last one said)", unsaid);
+
+  COR_W("a request was refused with %d by the HTTP server: its %s exceed%s the connection memory (%zu kB, --httpConnectionMemory) - "
+        "a long query fits in the body of POST /ngsi-ld/v1/entityOperations/query; or raise --httpConnectionMemory%s",
+        code,
+        (code == 414) ? "URL" : "headers",
+        (code == 414) ? "s" : "",
+        ((connectionMemory != 0) ? connectionMemory : 32 * 1024) / 1024,
+        more);
+}
+
+
+
+//
 // corRestHttpLoopsSet - no-op here
 //
 // libmicrohttpd has a thread per connection and no event loop of ours to
@@ -470,7 +544,12 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
   //
   // When HTTPS server credentials have been set (a TLS test receiver, not the
   // broker), MHD_USE_TLS is added together with the in-memory key/cert.
-  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME | MHD_ALLOW_UPGRADE;
+  //
+  // MHD_USE_ERROR_LOG: libmicrohttpd's messages to mhdLog (which says only a refused request's). The connection
+  // memory: corRestConnectionMemorySet's, else libmicrohttpd's own default, 32 kB.
+  //
+  unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME | MHD_ALLOW_UPGRADE | MHD_USE_ERROR_LOG;
+  size_t       memory = (connectionMemory != 0) ? connectionMemory : 32 * 1024;
 
   if ((keyPem != NULL) && (certPem != NULL))
     mhdDaemon = MHD_start_daemon(
@@ -487,6 +566,11 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
       (unsigned int) poolSize,
       MHD_OPTION_CONNECTION_TIMEOUT,
       (unsigned int) 30,
+      MHD_OPTION_CONNECTION_MEMORY_LIMIT,
+      memory,
+      MHD_OPTION_EXTERNAL_LOGGER,
+      mhdLog,
+      NULL,
       MHD_OPTION_HTTPS_MEM_KEY,
       keyPem,
       MHD_OPTION_HTTPS_MEM_CERT,
@@ -508,6 +592,11 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
       (unsigned int) poolSize,
       MHD_OPTION_CONNECTION_TIMEOUT,
       (unsigned int) 30,
+      MHD_OPTION_CONNECTION_MEMORY_LIMIT,
+      memory,
+      MHD_OPTION_EXTERNAL_LOGGER,
+      mhdLog,
+      NULL,
       MHD_OPTION_END
     );
 

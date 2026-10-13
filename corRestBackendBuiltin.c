@@ -121,6 +121,16 @@ static bool           corHttpRunning = false;
 
 // -----------------------------------------------------------------------------
 //
+// corRestConnectionMemorySet - no-op here: libmicrohttpd's connection pool (corHttp has a buffer of its own)
+//
+void corRestConnectionMemorySet(int kb)
+{
+  (void) kb;
+}
+
+
+
+//
 // corRestHttpLoopsSet - how many event loops to run (builtin server only)
 //
 // Called before corRestInit. Clamped rather than rejected: the caller's job is
