@@ -41,6 +41,18 @@
 // Globals
 //
 CorRestServiceVector   corRestServiceV[CorVerbs];
+CorRestServiceVector   corRestListenerServiceV[CorVerbs];   // corRestListen's routes
+
+
+
+// -----------------------------------------------------------------------------
+//
+// routesOf - the routes of the listener the request came in on
+//
+static inline CorRestServiceVector* routesOf(void)
+{
+  return (corRest.listener == 0) ? corRestServiceV : corRestListenerServiceV;
+}
 
 
 
@@ -424,7 +436,7 @@ void corRestProcessRequest(void)
     // tailor validation (e.g. batch ops surface per-element @context errors as
     // 207 entries instead of a global 400). serviceP may stay NULL here; the
     // 404/405 handling below still runs in that case.
-    corRest.serviceP = corRestServiceLookup(&corRestServiceV[corRest.in.verb]);
+    corRest.serviceP = corRestServiceLookup(&routesOf()[corRest.in.verb]);
 
   //
   // Admission (corRestSetAdmitHook) - before anything is done for the request: a client that is not
@@ -550,7 +562,7 @@ void corRestProcessRequest(void)
     for (int v = 0; v < CorVerbs; v++)
     {
       if (v == corRest.in.verb) continue;
-      CorRestService* probe = corRestServiceLookup(&corRestServiceV[v]);
+      CorRestService* probe = corRestServiceLookup(&routesOf()[v]);
       if (probe == NULL) continue;
       if (pos > 0) { allow[pos++] = ','; allow[pos++] = ' '; }
       const char* vs = corRestVerbToString((CorRestVerb) v);
@@ -1445,11 +1457,13 @@ static bool optionsHandler(void)
   char allow[128];
   int  pos = 0;
 
+  CorRestServiceVector* routeV = routesOf();
+
   for (int verb = 0; verb < CorVerbs; verb++)
   {
-    for (int ix = 0; ix < corRestServiceV[verb].services; ix++)
+    for (int ix = 0; ix < routeV[verb].services; ix++)
     {
-      if (strcmp(corRestServiceV[verb].serviceV[ix].url, matchedUrl) == 0)
+      if (strcmp(routeV[verb].serviceV[ix].url, matchedUrl) == 0)
       {
         if (pos > 0)
         {
@@ -1481,9 +1495,9 @@ static bool optionsHandler(void)
 
 // -----------------------------------------------------------------------------
 //
-// corRestInit -
+// routesBuild - a listener's routes, per verb; HEAD for every GET, OPTIONS for every path
 //
-int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize)
+static int routesBuild(CorRestServiceVector* routeV, CorRestServiceSimplified serviceV[], int services)
 {
   // --- Count services per verb ---
   int counts[CorVerbs];
@@ -1506,14 +1520,14 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
   // --- Allocate per-verb arrays ---
   for (int verb = 0; verb < CorVerbs; verb++)
   {
-    corRestServiceV[verb].services = 0;
-    corRestServiceV[verb].serviceV = NULL;
+    routeV[verb].services = 0;
+    routeV[verb].serviceV = NULL;
 
     if (counts[verb] == 0)
       continue;
 
-    corRestServiceV[verb].serviceV = (CorRestService*) calloc(counts[verb], sizeof(CorRestService));
-    if (corRestServiceV[verb].serviceV == NULL)
+    routeV[verb].serviceV = (CorRestService*) calloc(counts[verb], sizeof(CorRestService));
+    if (routeV[verb].serviceV == NULL)
       return -1;
   }
 
@@ -1524,21 +1538,21 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
     if (verb >= CorVerbs)
       continue;
 
-    CorRestServiceVector* sv = &corRestServiceV[verb];
+    CorRestServiceVector* sv = &routeV[verb];
     servicePrepare(&sv->serviceV[sv->services], &serviceV[ix]);
     sv->services++;
 
     // Auto-add HEAD for every GET (same handler; body suppressed at response time)
     if (verb == CorVerbGet)
     {
-      CorRestServiceVector* headSv = &corRestServiceV[CorVerbHead];
+      CorRestServiceVector* headSv = &routeV[CorVerbHead];
       servicePrepare(&headSv->serviceV[headSv->services], &serviceV[ix]);
       headSv->services++;
     }
   }
 
   // --- Auto-generate OPTIONS for each unique URL path ---
-  CorRestServiceVector* optSv = &corRestServiceV[CorVerbOptions];
+  CorRestServiceVector* optSv = &routeV[CorVerbOptions];
 
   for (int ix = 0; ix < services; ix++)
   {
@@ -1567,6 +1581,20 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
     }
   }
 
+  return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestInit -
+//
+int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize)
+{
+  if (routesBuild(corRestServiceV, serviceV, services) != 0)
+    return -1;
+
   //
   // Async worker pool — one worker per I/O thread, one queue per event loop.
   //
@@ -1594,4 +1622,18 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
   }
 
   return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestListen -
+//
+int corRestListen(const char* host, unsigned short port, CorRestServiceSimplified serviceV[], int services)
+{
+  if (routesBuild(corRestListenerServiceV, serviceV, services) != 0)
+    return -1;
+
+  return corRestBackendListen(host, port);
 }

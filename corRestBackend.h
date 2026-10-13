@@ -46,6 +46,17 @@ extern int   corRestBackendStart(unsigned short port, int poolSize, char* keyPem
 
 // -----------------------------------------------------------------------------
 //
+// corRestBackendListen - a second listener, on 'host' (a name or an address) and 'port', plain HTTP, one
+// I/O thread: its requests have CorRestState.listener 1. After corRestBackendStart.
+//
+//   Returns 0, or -1 with a reason on stderr - the built-in server has one listener.
+//
+extern int   corRestBackendListen(const char* host, unsigned short port);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestHttpLoopsSet - how many event loops share the listening port
 //
 // BUILTIN SERVER ONLY, and a no-op on the libmicrohttpd one, which has a thread

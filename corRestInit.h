@@ -51,6 +51,22 @@
 extern int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize);
 
 
+
+// -----------------------------------------------------------------------------
+//
+// corRestListen - a second listener, with routes of its own
+//
+// On 'host' (a name or an address - "127.0.0.1" keeps it to the machine) and 'port', plain HTTP, one I/O
+// thread; its requests run through the same pipeline and hooks as the first listener's, with
+// CorRestState.listener 1, and are matched against 'serviceV' only - a route of corRestInit's is a 404
+// there, and one of these a 404 on corRestInit's port. No protocol upgrades. After corRestInit;
+// libmicrohttpd only (the built-in server refuses).
+//
+// Returns 0, or -1 with a reason on stderr.
+//
+extern int corRestListen(const char* host, unsigned short port, CorRestServiceSimplified serviceV[], int services);
+
+
 // -----------------------------------------------------------------------------
 //
 // corRestHttpsServerCredentialsSet - serve HTTPS instead of HTTP
