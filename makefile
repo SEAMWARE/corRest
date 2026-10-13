@@ -76,7 +76,25 @@ else
   $(error COR_HTTP_SERVER must be 'mhd' or 'builtin', not '$(COR_HTTP_SERVER)')
 endif
 
-CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
+#
+# COR_WITH_COR_PROTOCOL - 1 | 0. cor://, the binary NGSI-LD protocol (corRestCor.c: its server and its
+# client). 0 leaves the file out, and corRestCor.h's functions with it: coraine's makefile passes the
+# same value to this lib and, as COR_FEATURE_COR_PROTOCOL, to the broker - the broker built without it
+# calls none of them. The codec (corTree's corTreeBin.c) is not this file's: corDB's log is written in it.
+#
+COR_WITH_COR_PROTOCOL ?= 1
+# The value is in CFLAGS too, so that the flag stamp below changes with it: the archive is then rebuilt,
+# and one built with corRestCor.o does not keep it.
+#
+ifeq ($(COR_WITH_COR_PROTOCOL),1)
+  COR_PROTOCOL_SOURCE = corRestCor.c
+else ifeq ($(COR_WITH_COR_PROTOCOL),0)
+  COR_PROTOCOL_SOURCE =
+else
+  $(error COR_WITH_COR_PROTOCOL must be 1 or 0, not '$(COR_WITH_COR_PROTOCOL)')
+endif
+
+CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) -DCOR_WITH_COR_PROTOCOL=$(COR_WITH_COR_PROTOCOL) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
@@ -92,7 +110,7 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestHooks.c          \
                 corRestParamRegistry.c  \
                 corRestClient.c         \
-                corRestCor.c            \
+                $(COR_PROTOCOL_SOURCE)   \
                 corRestRun.c            \
                 corRestWait.c           \
                 corRestResolve.c        \
