@@ -19,6 +19,9 @@
 #include <stdio.h>                        // fprintf
 #include <time.h>                         // clock_gettime
 #include <stdarg.h>                       // va_list
+#include <stdint.h>                       // intptr_t
+#include <netdb.h>                        // getaddrinfo, freeaddrinfo
+#include <netinet/in.h>                   // sockaddr_in, sockaddr_in6
 
 #include <microhttpd.h>
 
@@ -40,6 +43,7 @@ extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
 // The daemon
 //
 static struct MHD_Daemon*  mhdDaemon = NULL;
+static struct MHD_Daemon*  mhdDaemon2 = NULL;          // corRestBackendListen's
 
 
 
@@ -218,6 +222,7 @@ static enum MHD_Result mhdConnectionHandler
     corRestP  = conP;
 
     corRestStateInit(connection, url, method);
+    corRest.listener = (int) (intptr_t) cls;           // the daemon's: 0 corRestBackendStart's, 1 corRestBackendListen's
 
     // Create this connection's application state (e.g. per-conn corNgsild),
     // stored in corRest.userData and freed in mhdRequestCompleted.
@@ -294,7 +299,7 @@ static enum MHD_Result mhdConnectionHandler
   // --- Final call, an upgrade (CorRestUpgradeHook): accepted - the 101, and the socket to the
   // application once it is written (mhdUpgradeHandler); refused - its error, as any response ---
   //
-  if ((corRest.asyncProcessed == false) && (corRestUpgradeHookF != NULL))
+  if ((corRest.asyncProcessed == false) && (corRestUpgradeHookF != NULL) && (corRest.listener == 0))   // the second listener has no upgrades
   {
     const char* upgrade = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Upgrade");
 
@@ -613,10 +618,87 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
 
 // -----------------------------------------------------------------------------
 //
+// corRestBackendListen -
+//
+int corRestBackendListen(const char* host, unsigned short port)
+{
+  struct addrinfo  hints;
+  struct addrinfo* aiP = NULL;
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family   = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  int rc = getaddrinfo(host, NULL, &hints, &aiP);
+
+  if ((rc != 0) || (aiP == NULL))
+  {
+    fprintf(stderr, "corRestListen: '%s': %s\n", host, (rc != 0) ? gai_strerror(rc) : "no address");
+    return -1;
+  }
+
+  struct sockaddr_storage addr;
+  unsigned int            flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_EPOLL | MHD_ALLOW_SUSPEND_RESUME | MHD_USE_ERROR_LOG;
+  size_t                  memory = (connectionMemory != 0) ? connectionMemory : 32 * 1024;
+
+  memset(&addr, 0, sizeof(addr));
+  memcpy(&addr, aiP->ai_addr, aiP->ai_addrlen);
+
+  if (aiP->ai_family == AF_INET6)
+  {
+    ((struct sockaddr_in6*) &addr)->sin6_port = htons(port);
+    flags |= MHD_USE_IPv6;
+  }
+  else
+    ((struct sockaddr_in*) &addr)->sin_port = htons(port);
+
+  freeaddrinfo(aiP);
+
+  mhdDaemon2 = MHD_start_daemon(
+    flags,
+    port,
+    NULL,
+    NULL,
+    mhdConnectionHandler,
+    (void*) (intptr_t) 1,
+    MHD_OPTION_NOTIFY_COMPLETED,
+    mhdRequestCompleted,
+    NULL,
+    MHD_OPTION_SOCK_ADDR,
+    (struct sockaddr*) &addr,
+    MHD_OPTION_CONNECTION_TIMEOUT,
+    (unsigned int) 30,
+    MHD_OPTION_CONNECTION_MEMORY_LIMIT,
+    memory,
+    MHD_OPTION_EXTERNAL_LOGGER,
+    mhdLog,
+    NULL,
+    MHD_OPTION_END
+  );
+
+  if (mhdDaemon2 == NULL)
+  {
+    fprintf(stderr, "corRestListen: MHD_start_daemon failed on %s port %d\n", host, port);
+    return -1;
+  }
+
+  return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestBackendStop -
 //
 void corRestBackendStop(void)
 {
+  if (mhdDaemon2 != NULL)
+  {
+    MHD_stop_daemon(mhdDaemon2);
+    mhdDaemon2 = NULL;
+  }
+
   if (mhdDaemon != NULL)
   {
     MHD_stop_daemon(mhdDaemon);

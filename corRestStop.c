@@ -19,6 +19,7 @@
 // Globals (defined in corRestInit.c)
 //
 extern CorRestServiceVector   corRestServiceV[];
+extern CorRestServiceVector   corRestListenerServiceV[];
 
 
 
@@ -41,5 +42,9 @@ void corRestStop(void)
     free(corRestServiceV[verb].serviceV);
     corRestServiceV[verb].serviceV = NULL;
     corRestServiceV[verb].services = 0;
+
+    free(corRestListenerServiceV[verb].serviceV);
+    corRestListenerServiceV[verb].serviceV = NULL;
+    corRestListenerServiceV[verb].services = 0;
   }
 }

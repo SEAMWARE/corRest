@@ -801,6 +801,18 @@ int corRestBackendStart(unsigned short port, int poolSize, char* keyPem, char* c
 
 // -----------------------------------------------------------------------------
 //
+// corRestBackendListen - the built-in server has one listener
+//
+int corRestBackendListen(const char* host, unsigned short port)
+{
+  fprintf(stderr, "corRestListen: %s port %d: the built-in HTTP server has one listener - libmicrohttpd has two\n", host, port);
+  return -1;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestBackendStop -
 //
 void corRestBackendStop(void)

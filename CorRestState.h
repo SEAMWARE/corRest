@@ -129,6 +129,12 @@ typedef struct CorRestState
   // request's, not the thread's - on a coroutine, another request of the same thread may be in one too
   //
   int                      selfForwardDepth;
+
+  //
+  // listener - the listener the request came in on: 0 the port of corRestInit, 1 the one of corRestListen.
+  // Each has its own routes
+  //
+  int                      listener;
 } CorRestState;
 
 

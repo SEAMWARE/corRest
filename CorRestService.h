@@ -67,6 +67,8 @@ typedef struct CorRestServiceOptions
   {
     uint8_t  entityArrayBody : 1;  // body is an array of Entity objects → § 6.2.4
                                    // @context-member rule is checked per element
+    uint8_t  plainJsonBody   : 1;  // the body is JSON of the application's own, no JSON-LD document: the
+                                   // payload hooks leave it as it is (no @context rules, no expansion)
   } features;
 } CorRestServiceOptions;
 
