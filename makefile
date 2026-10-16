@@ -94,7 +94,23 @@ else
   $(error COR_WITH_COR_PROTOCOL must be 1 or 0, not '$(COR_WITH_COR_PROTOCOL)')
 endif
 
-CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) -DCOR_WITH_COR_PROTOCOL=$(COR_WITH_COR_PROTOCOL) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
+#
+# COR_WITH_CLIENT_PROXY - 1 | 0. The client's HTTP proxy (corRestClientProxy.c): https through a CONNECT
+# tunnel, http with the absolute URI - set by the application (corRestClientProxyFromEnv, corRestClientProxySet).
+# 0 leaves the file out, and corRestClientProxy.h's functions with it; both engines then connect straight to
+# the host, as before.
+#
+COR_WITH_CLIENT_PROXY ?= 1
+
+ifeq ($(COR_WITH_CLIENT_PROXY),1)
+  CLIENT_PROXY_SOURCE = corRestClientProxy.c
+else ifeq ($(COR_WITH_CLIENT_PROXY),0)
+  CLIENT_PROXY_SOURCE =
+else
+  $(error COR_WITH_CLIENT_PROXY must be 1 or 0, not '$(COR_WITH_CLIENT_PROXY)')
+endif
+
+CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) -DCOR_WITH_COR_PROTOCOL=$(COR_WITH_COR_PROTOCOL) -DCOR_WITH_CLIENT_PROXY=$(COR_WITH_CLIENT_PROXY) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
@@ -117,7 +133,8 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestClientPool.c     \
                 corRestClientParse.c    \
                 corRestClientTls.c      \
-                corRestClientMulti.c
+                corRestClientMulti.c    \
+                $(CLIENT_PROXY_SOURCE)
 
 #
 # BUILD - which flavour of build this is, and where its objects live.

@@ -23,6 +23,8 @@ its own.
 - **Parallel multi-client** — fire N requests and harvest them together (used for
   distributed-operation fan-out).
 - **Connection pool + TLS** — keep-alive pooling per host and an OpenSSL transport.
+- **HTTP proxy** (`COR_WITH_CLIENT_PROXY`) — both engines: `https` through a `CONNECT` tunnel, `http` with
+  the absolute URI; set by the application, from the environment or given.
 
 ## API reference
 
@@ -109,6 +111,23 @@ void                  corRestClientMultiDestroy(CorRestClientMulti* multi);
 A connection pool (`corRestClientPool*`) and an OpenSSL TLS transport
 (`corRestClientTls*`) sit underneath for keep-alive and `https://`.
 
+### HTTP proxy
+
+```c
+bool corRestClientProxyFromEnv(char* errBuf, int errBufLen);   // https_proxy, http_proxy, no_proxy (or upper case)
+bool corRestClientProxySet(const char* httpUrl, const char* httpsUrl, const char* noProxy, char* errBuf, int errBufLen);
+```
+
+No proxy is used until the application calls one of them. A proxy is an `http://` URL -
+`[user:password@]host[:port]`, port 1080 by default, the user and password sent as `Proxy-Authorization:
+Basic`. An `https` request goes through a `CONNECT host:port` tunnel, TLS then to the host itself (its name
+for SNI and the certificate check); an `http` request goes to the proxy with its absolute URI. `no_proxy`:
+comma-separated - `*`, host names (a domain covers its hosts: `.example.org` or `example.org`), addresses;
+ports are ignored. A proxy that cannot be reached, or that refuses the tunnel, is the error detail - "Connection
+to the proxy host:port failed", the proxy's status line. `COR_WITH_CLIENT_PROXY=0` builds without it (about
+6.7 KB of code less): both engines connect straight to the host, and `corRestClientProxy.h`'s functions are
+not in the library.
+
 ## Usage example
 
 ```c
@@ -144,6 +163,7 @@ make            # build libcorRest.a (+ .so) and the test binary
 make ci         # clean + install
 make di         # debug + install
 make clientLifetimeTest   # the lifetime of a client response, under AddressSanitizer
+make COR_WITH_CLIENT_PROXY=0   # without the client's HTTP proxy
 ```
 
 `libcorRest.a` links statically into its consumers. Sibling repos must be
