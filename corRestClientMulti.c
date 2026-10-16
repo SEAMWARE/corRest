@@ -26,6 +26,9 @@
 
 #include "corBase/corCo.h"                      // corCoCurrent
 #include "corRest/corRestResolve.h"             // corRestResolve
+#if COR_WITH_CLIENT_PROXY
+#include "corRest/corRestClientProxy.h"         // corRestClientProxyFor, corRestClientProxyTunnel
+#endif
 #include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientMulti, CorRestClientRequest, CorRestClientResponse
 #include "corAlloc/CorAlloc.h"                   // CorAlloc
@@ -239,7 +242,7 @@ static int buildSendBuf(CorrMultiEntry* entry)
   // The request line holds the path (with its query), the Host header the host: both counted, or a
   // path of a few hundred characters does not fit
   //
-  int estimate = 512 + (int) strlen(req->path) + (int) strlen(req->host) + (int) strlen(corRestClientUserAgent);
+  int estimate = 1600 + (int) strlen(req->path) + 2 * (int) strlen(req->host) + (int) strlen(corRestClientUserAgent);   // a proxy's absolute URI and Proxy-Authorization too
   for (int i = 0; i < req->headerCount; i++)
     estimate += (int)strlen(req->headerV[i].key) + (int)strlen(req->headerV[i].value) + 4;
   estimate += bodyLen;
@@ -252,9 +255,32 @@ static int buildSendBuf(CorrMultiEntry* entry)
   char* end = buf + estimate;
   int   n;
 
+#if COR_WITH_CLIENT_PROXY
+  //
+  // Through an http proxy: the absolute URI (RFC 9112 § 3.2.2) - an https request goes through a tunnel, as is
+  //
+  CorRestClientProxyRoute route;
+  bool                    viaProxy = (strcmp(req->scheme, "http") == 0) && corRestClientProxyFor(false, req->host, &route);
+
+  if (viaProxy)
+  {
+    bool v6 = (strchr(req->host, ':') != NULL);
+    n = snprintf(p, end - p, "%s http://%s%s%s:%d%s HTTP/1.1\r\n", verbStr, v6 ? "[" : "", req->host, v6 ? "]" : "", req->port, req->path);
+  }
+  else
+#endif
   n = snprintf(p, end - p, "%s %s HTTP/1.1\r\n", verbStr, req->path);
   if (n < 0 || n >= end - p) { free(buf); return -1; }
   p += n;
+
+#if COR_WITH_CLIENT_PROXY
+  if (viaProxy && (route.auth[0] != 0))
+  {
+    n = snprintf(p, end - p, "Proxy-Authorization: %s\r\n", route.auth);
+    if (n < 0 || n >= end - p) { free(buf); return -1; }
+    p += n;
+  }
+#endif
 
   if (req->port == 80 || req->port == 443)
     n = snprintf(p, end - p, "Host: %s\r\n", req->host);
@@ -348,13 +374,30 @@ static int startConnect(CorrMultiEntry* entry)
   struct addrinfo  hints;
   struct addrinfo* res = NULL;
   char             portStr[8];
+  const char*      connectHost = req->host;          // where the socket goes: the host, or its proxy
+  unsigned short   connectPort = req->port;
+
+#if COR_WITH_CLIENT_PROXY
+  CorRestClientProxyRoute route;
+
+  if (corRestClientProxyFor(isTls, req->host, &route))
+  {
+    connectHost = route.host;
+    connectPort = route.port;
+
+    //
+    // What a failure to reach it is - said by the connect steps' failures; cleared once connected
+    //
+    snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection to the proxy %.200s:%d failed", route.host, route.port);
+  }
+#endif
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family   = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
-  snprintf(portStr, sizeof(portStr), "%d", req->port);
+  snprintf(portStr, sizeof(portStr), "%d", connectPort);
 
-  if (corRestResolve(req->host, portStr, &hints, &res) != 0 || res == NULL)
+  if (corRestResolve(connectHost, portStr, &hints, &res) != 0 || res == NULL)
     return -1;
 
   //
@@ -442,6 +485,7 @@ static int startConnect(CorrMultiEntry* entry)
     //
     aiDone(conn);
     entry->state = CorrStateWriting;
+    entry->resp.errorDetail[0] = 0;
   }
   else
     entry->state = CorrStateConnecting;
@@ -524,13 +568,32 @@ static int finishConnect(CorrMultiEntry* entry)
     int flags = fcntl(conn->fd, F_GETFL, 0);
     fcntl(conn->fd, F_SETFL, flags & ~O_NONBLOCK);
 
-    if (corRestClientTlsConnect(conn) != 0)
+#if COR_WITH_CLIENT_PROXY
+    //
+    // Through a proxy: the tunnel to the host first - its TLS goes through it, as the handshake below, blocking
+    //
+    CorRestClientProxyRoute route;
+    char                    why[256];
+
+    if (corRestClientProxyFor(true, conn->host, &route) &&
+        (corRestClientProxyTunnel(conn->fd, conn->host, conn->port, &route, entry->req.connectTimeoutMs, why, sizeof(why)) != 0))
+    {
+      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "%s", why);
       return -1;
+    }
+#endif
+
+    if (corRestClientTlsConnect(conn) != 0)
+    {
+      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "TLS with %.200s failed", conn->host);
+      return -1;
+    }
 
     fcntl(conn->fd, F_SETFL, flags);
   }
 
   entry->state = CorrStateWriting;
+  entry->resp.errorDetail[0] = 0;               // connected: no proxy failure to tell
   return 0;
 }
 
@@ -618,7 +681,8 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
     if (startConnect(entry) != 0)
     {
       entry->resp.error = CORR_ERR_CONNECT;
-      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
+      if (entry->resp.errorDetail[0] == 0)   // a proxy's is said already
+        snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
       entry->state = CorrStateDone;
       multi->done++;
       continue;
@@ -735,7 +799,8 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
 
             aiDone(conn);
             entry->resp.error = CORR_ERR_CONNECT;
-            snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
+            if (entry->resp.errorDetail[0] == 0)   // a proxy's refusal is said already
+              snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Connection failed");
             entry->state = CorrStateDone;
             multi->done++;
             break;

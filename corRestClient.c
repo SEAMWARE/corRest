@@ -25,6 +25,9 @@
 #include "corRest/corRestResolve.h"             // corRestResolve
 #include "corRest/corRestWait.h"                // corRestWaitFd
 #include "corRest/corRestClient.h"                 // CorRestClientConn, CorRestClientRequest, CorRestClientResponse
+#if COR_WITH_CLIENT_PROXY
+#include "corRest/corRestClientProxy.h"            // corRestClientProxyFor, corRestClientProxyTunnel
+#endif
 #include "corAlloc/corAlloc.h"                   // corAlloc
 #include "corAlloc/CorAlloc.h"                     // CorAlloc
 #include "corTree/CorNode.h"                     // CorNode
@@ -499,10 +502,35 @@ static int buildRequestBuf(CorRestClientRequest* req, char* buf, int bufSize,
   int   n;
 
   const char* verbStr = corRestVerbToString(req->verb);
+
+#if COR_WITH_CLIENT_PROXY
+  //
+  // Through an http proxy: the absolute URI (RFC 9112 § 3.2.2) - an https request goes through a tunnel, as is
+  //
+  CorRestClientProxyRoute route;
+  bool                    viaProxy = (strcmp(req->scheme, "http") == 0) && corRestClientProxyFor(false, req->host, &route);
+
+  if (viaProxy)
+  {
+    bool v6 = (strchr(req->host, ':') != NULL);
+    n = snprintf(p, end - p, "%s http://%s%s%s:%d%s HTTP/1.1\r\n", verbStr, v6 ? "[" : "", req->host, v6 ? "]" : "", req->port, req->path);
+  }
+  else
+#endif
   n = snprintf(p, end - p, "%s %s HTTP/1.1\r\n", verbStr, req->path);
   if (n < 0 || n >= end - p)
     return -1;
   p += n;
+
+#if COR_WITH_CLIENT_PROXY
+  if (viaProxy && (route.auth[0] != 0))
+  {
+    n = snprintf(p, end - p, "Proxy-Authorization: %s\r\n", route.auth);
+    if (n < 0 || n >= end - p)
+      return -1;
+    p += n;
+  }
+#endif
 
   if (req->port == 80 || req->port == 443)
     n = snprintf(p, end - p, "Host: %s\r\n", req->host);
@@ -679,11 +707,34 @@ static int corRestClientSendOnce(CorRestClientRequest* req, CorRestClientRespons
 //
 // connCreate - Create a new connection to host:port
 //
-static CorRestClientConn* connCreate(const char* host, unsigned short port, bool tls, int timeoutMs)
+static CorRestClientConn* connCreate(const char* host, unsigned short port, bool tls, int timeoutMs, char* why, int whyLen)
 {
+#if COR_WITH_CLIENT_PROXY
+  //
+  // Through a proxy: connected to it; for https, a tunnel to the host - TLS then goes through it
+  //
+  CorRestClientProxyRoute route;
+  bool                    viaProxy = corRestClientProxyFor(tls, host, &route);
+  int                     fd       = viaProxy ? tcpConnect(route.host, route.port, timeoutMs) : tcpConnect(host, port, timeoutMs);
+
+  if ((fd < 0) && viaProxy)
+    snprintf(why, whyLen, "Connection to the proxy %.200s:%d failed", route.host, route.port);
+  if (fd < 0)
+    return NULL;
+
+  if (viaProxy && tls && (corRestClientProxyTunnel(fd, host, port, &route, timeoutMs, why, whyLen) != 0))
+  {
+    close(fd);
+    return NULL;
+  }
+#else
+  (void) why;
+  (void) whyLen;
+
   int fd = tcpConnect(host, port, timeoutMs);
   if (fd < 0)
     return NULL;
+#endif
 
   CorRestClientConn* conn = (CorRestClientConn*)calloc(1, sizeof(CorRestClientConn));
   if (conn == NULL)
@@ -724,6 +775,7 @@ static CorRestClientConn* connCreate(const char* host, unsigned short port, bool
 
     if (corRestClientTlsConnect(conn) != 0)
     {
+      snprintf(why, whyLen, "TLS with %.200s failed", host);
       close(fd);
       free(conn->buf);
       free(conn);
@@ -784,10 +836,12 @@ static int sendFollow(CorRestClientRequest* req, CorRestClientResponse* resp, ch
 
     if (conn == NULL)
     {
-      conn = connCreate(req->host, req->port, isTls, req->connectTimeoutMs);
+      char why[256] = "";
+
+      conn = connCreate(req->host, req->port, isTls, req->connectTimeoutMs, why, sizeof(why));
       if (conn == NULL)
       {
-        setError(resp, CORR_ERR_CONNECT, "Connection failed");
+        setError(resp, CORR_ERR_CONNECT, (why[0] != 0) ? why : "Connection failed");
         return CORR_ERR_CONNECT;
       }
     }
@@ -800,10 +854,12 @@ static int sendFollow(CorRestClientRequest* req, CorRestClientResponse* resp, ch
 
       if (fromPool && (s == CORR_ERR_SEND || s == CORR_ERR_RECV || s == CORR_ERR_CLOSED))
       {
-        conn = connCreate(req->host, req->port, isTls, req->connectTimeoutMs);
+        char why[256] = "";
+
+        conn = connCreate(req->host, req->port, isTls, req->connectTimeoutMs, why, sizeof(why));
         if (conn == NULL)
         {
-          setError(resp, CORR_ERR_CONNECT, "Retry connection failed");
+          setError(resp, CORR_ERR_CONNECT, (why[0] != 0) ? why : "Retry connection failed");
           return CORR_ERR_CONNECT;
         }
 
