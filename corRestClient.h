@@ -290,6 +290,15 @@ extern void               corRestClientPoolPut(CorRestClientConn* conn);
 
 // -----------------------------------------------------------------------------
 //
+// URL parsing (used internally by both engines, exposed for testing): scheme, host, port and path of req->url
+// into req; CORR_ERR_URL when malformed
+//
+extern int                corRestClientUrlParse(CorRestClientRequest* req);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // TLS (used internally, exposed for testing)
 //
 extern int   corRestClientTlsInit(void);
