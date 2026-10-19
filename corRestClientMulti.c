@@ -10,7 +10,7 @@
 //
 
 #include <stdio.h>                               // snprintf
-#include <stdlib.h>                              // calloc, malloc, free, atoi
+#include <stdlib.h>                              // calloc, malloc, free
 #include <string.h>                              // memset, memcmp, memcpy, strlen, strcmp, strncmp, strerror
 #include <stdbool.h>                             // bool, true, false
 #include <unistd.h>                              // close, read, write
@@ -618,55 +618,14 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
   {
     CorrMultiEntry* entry = &multi->entries[i];
 
-    const char* url = entry->req.url;
-    if (strncmp(url, "https://", 8) == 0)
-    {
-      memcpy(entry->req.scheme, "https", 6);
-      url += 8;
-      entry->req.port = 443;
-    }
-    else if (strncmp(url, "http://", 7) == 0)
-    {
-      memcpy(entry->req.scheme, "http", 5);
-      url += 7;
-      entry->req.port = 80;
-    }
-    else
+    if (corRestClientUrlParse(&entry->req) != 0)
     {
       entry->resp.error = CORR_ERR_URL;
-      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Bad URL scheme");
+      snprintf(entry->resp.errorDetail, sizeof(entry->resp.errorDetail), "Malformed URL");
       entry->state = CorrStateDone;
       multi->done++;
       continue;
     }
-
-    const char* hostStart = url;
-    const char* p = url;
-    while (*p != '\0' && *p != '/' && *p != '?')
-      p++;
-
-    int hostPortLen = (int)(p - hostStart);
-    const char* colon = (const char*)memchr(hostStart, ':', hostPortLen);
-    if (colon != NULL)
-    {
-      int hostLen = (int)(colon - hostStart);
-      if (hostLen > 0 && hostLen < (int)sizeof(entry->req.host))
-      {
-        memcpy(entry->req.host, hostStart, hostLen);
-        entry->req.host[hostLen] = '\0';
-        entry->req.port = (unsigned short)atoi(colon + 1);
-      }
-    }
-    else
-    {
-      if (hostPortLen > 0 && hostPortLen < (int)sizeof(entry->req.host))
-      {
-        memcpy(entry->req.host, hostStart, hostPortLen);
-        entry->req.host[hostPortLen] = '\0';
-      }
-    }
-
-    entry->req.path = (*p == '/' || *p == '?') ? (char*)p : (char*)"/";
 
     if (buildSendBuf(entry) != 0)
     {

@@ -10,7 +10,7 @@
 //
 
 #include <stdio.h>                               // snprintf
-#include <stdlib.h>                              // calloc, malloc, free, atoi
+#include <stdlib.h>                              // calloc, malloc, free
 #include <string.h>                              // memset, memcmp, memcpy, strlen, strcmp, strcasecmp, strncasecmp, strncmp, strerror
 #include <stdbool.h>                             // bool, true, false
 #include <unistd.h>                              // close, read, write
@@ -90,12 +90,13 @@ int corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgen
 
 // -----------------------------------------------------------------------------
 //
-// urlParse - Parse URL into scheme, host, port, path
+// corRestClientUrlParse - Parse URL into scheme, host, port, path
 //
 // Parses "http://host:port/path" and "https://host:port/path" by scanning
 // the string directly.  Default port 80 for http, 443 for https.
+// The port is digits only, 1-65535 - "host:9026x", "host:", "host:99999" are malformed.
 //
-static int urlParse(CorRestClientRequest* req)
+int corRestClientUrlParse(CorRestClientRequest* req)
 {
   const char* url = req->url;
 
@@ -136,9 +137,21 @@ static int urlParse(CorRestClientRequest* req)
     if (hostLen <= 0 || hostLen >= (int)sizeof(req->host))
       return CORR_ERR_URL;
 
+    long port = 0;
+    for (const char* d = colon + 1; d < p; d++)
+    {
+      if (*d < '0' || *d > '9')
+        return CORR_ERR_URL;
+      port = port * 10 + (*d - '0');
+      if (port > 65535)
+        return CORR_ERR_URL;
+    }
+    if (port == 0)                               // "host:" or "host:0"
+      return CORR_ERR_URL;
+
     memcpy(req->host, hostStart, hostLen);
     req->host[hostLen] = '\0';
-    req->port = (unsigned short)atoi(colon + 1);
+    req->port = (unsigned short)port;
   }
   else
   {
@@ -818,7 +831,7 @@ static void connDestroy(CorRestClientConn* conn)
 //
 static int sendFollow(CorRestClientRequest* req, CorRestClientResponse* resp, char** redirectUrlP)
 {
-  int s = urlParse(req);
+  int s = corRestClientUrlParse(req);
   if (s != 0)
   {
     setError(resp, CORR_ERR_URL, "Malformed URL");
@@ -924,7 +937,7 @@ static int sendFollow(CorRestClientRequest* req, CorRestClientResponse* resp, ch
       responseInit(resp);
 
       req->url = url;
-      s = urlParse(req);
+      s = corRestClientUrlParse(req);
       if (s != 0)
       {
         setError(resp, CORR_ERR_URL, "Malformed redirect URL");
@@ -970,7 +983,7 @@ int corRestClientSend(CorRestClientRequest* req, CorRestClientResponse* resp)
   if (redirectUrl != NULL)
   {
     req->url = url;
-    urlParse(req);
+    corRestClientUrlParse(req);
     free(redirectUrl);
   }
 
