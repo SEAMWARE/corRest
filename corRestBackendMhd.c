@@ -23,6 +23,7 @@
 #include <netdb.h>                        // getaddrinfo, freeaddrinfo
 #include <netinet/in.h>                   // sockaddr_in, sockaddr_in6
 #include <pthread.h>                      // pthread_mutex_*
+#include <sys/socket.h>                   // recv, MSG_PEEK, MSG_DONTWAIT
 
 #include <microhttpd.h>
 
@@ -59,8 +60,8 @@ static struct MHD_Daemon*  mhdDaemon2 = NULL;          // corRestBackendListen's
 // The writers append to 'buf' under 'mutex', from any thread. The reader, on MHD's thread, hands MHD what
 // is there; with nothing there it suspends the connection and says 0 - the only 0 MHD allows with its
 // own polling - and the next write, or the end, resumes it. A suspended connection has no timeout and
-// no disconnect detection: a client that left is seen at the next write (a server-sent events stream
-// writes something every few seconds for that), when MHD fails to send it and destroys the response.
+// MHD does not watch its socket: a write of 0 bytes looks (peerLeft) - the client closed its side, and
+// the connection is cut.
 //
 // Two references: the application's (corRestStreamEnd) and the response's (streamFree, MHD's free
 // callback). The last one frees.
@@ -114,6 +115,25 @@ static void release(CorRestStream* sP)
     free(sP->buf);
     free(sP);
   }
+}
+
+
+
+//
+// peerLeft - the client closed its side of a suspended connection: a read would say end of file. A stream's
+// client sends nothing after its request, so anything there (TLS records, say) is a client still there.
+// Called with sP->mutex held: MHD does not read a suspended connection, and does not close it before the
+// response is destroyed (gone).
+//
+static bool peerLeft(CorRestStream* sP)
+{
+  if ((sP->suspended == false) || (sP->gone == true))
+    return false;
+
+  const union MHD_ConnectionInfo* infoP = MHD_get_connection_info(sP->connection, MHD_CONNECTION_INFO_CONNECTION_FD);
+  char                            c;
+
+  return (infoP != NULL) && (recv(infoP->connect_fd, &c, 1, MSG_PEEK | MSG_DONTWAIT) == 0);
 }
 
 
@@ -224,7 +244,14 @@ bool corRestStreamWrite(CorRestStream* sP, const char* data, int len)
 
   pthread_mutex_lock(&sP->mutex);
 
-  if ((sP->gone == false) && (sP->ended == false) && (sP->cut == false))
+  if ((len == 0) && (peerLeft(sP) == true))
+    sP->cut = true;                                   // the reader closes the connection (resume, below)
+
+  if ((sP->gone == false) && (sP->ended == false) && (sP->cut == true))
+    resume(sP);
+  else if ((sP->gone == false) && (sP->ended == false) && (len == 0))
+    ok = true;
+  else if ((sP->gone == false) && (sP->ended == false))
   {
     size_t need = sP->len + (size_t) len;
 

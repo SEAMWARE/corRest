@@ -81,6 +81,9 @@ extern bool corRestStreamResponse(CorRestStreamOpen openFn, void* ctx);
 // false: the client is gone, or fell COR_REST_STREAM_PENDING_MAX behind, or the server is stopping -
 // nothing more will reach it. The handle stays the application's until corRestStreamEnd.
 //
+// len 0 writes nothing and says whether the client is still there - a client that closed its connection
+// while there was nothing to send is seen by it; an application that must know soon calls it now and then.
+//
 extern bool corRestStreamWrite(CorRestStream* streamP, const char* data, int len);
 
 
