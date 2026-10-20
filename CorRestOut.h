@@ -13,6 +13,8 @@
 #include "corRest/CorRestKeyValue.h"
 #include "corRest/CorRestIn.h"       // COR_REST_INITIAL_KV_SLOTS
 
+struct CorRestStream;                // corRestStream.h
+
 
 
 // -----------------------------------------------------------------------------
@@ -35,6 +37,11 @@ typedef struct CorRestOut
   char*       payload;
   int         payloadSize;
   bool        noRender;           // the transport carries responseTree as it is (cor://): no JSON render
+
+  // A body written over time (corRestStream.h) - set by corRestStreamResponse; in every build, so that
+  // the struct is the same with COR_WITH_STREAM=0
+  void      (*streamOpenF)(struct CorRestStream* streamP, void* ctx);
+  void*       streamCtx;
 
   // Problem details (RFC 9457) - set by service routines on error
   const char*  problemType;         // Error type URI (NULL = no error)

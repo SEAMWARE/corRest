@@ -22,6 +22,7 @@
 #include <stdint.h>                       // intptr_t
 #include <netdb.h>                        // getaddrinfo, freeaddrinfo
 #include <netinet/in.h>                   // sockaddr_in, sockaddr_in6
+#include <pthread.h>                      // pthread_mutex_*
 
 #include <microhttpd.h>
 
@@ -32,6 +33,7 @@
 #include "corRest/corRestStateInit.h"     // corRestStateInit, corRestStateRelease
 #include "corRest/corRestHooks.h"         // CorRestHook, corRestSetMaxRequestSize
 #include "corRest/corRestProblem.h"       // COR_REST_ERROR_*, corRestProblem
+#include "corRest/corRestStream.h"        // CorRestStream, corRestStreamWrite, corRestStreamEnd
 #include "corRest/corRestBackend.h"       // Own interface
 
 extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
@@ -45,6 +47,240 @@ extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
 static struct MHD_Daemon*  mhdDaemon = NULL;
 static struct MHD_Daemon*  mhdDaemon2 = NULL;          // corRestBackendListen's
 
+
+
+
+#if COR_WITH_STREAM
+// -----------------------------------------------------------------------------
+//
+// CorRestStream - a response from a content reader (MHD_create_response_from_callback, size unknown:
+// chunked on HTTP/1.1)
+//
+// The writers append to 'buf' under 'mutex', from any thread. The reader, on MHD's thread, hands MHD what
+// is there; with nothing there it suspends the connection and says 0 - the only 0 MHD allows with its
+// own polling - and the next write, or the end, resumes it. A suspended connection has no timeout and
+// no disconnect detection: a client that left is seen at the next write (a server-sent events stream
+// writes something every few seconds for that), when MHD fails to send it and destroys the response.
+//
+// Two references: the application's (corRestStreamEnd) and the response's (streamFree, MHD's free
+// callback). The last one frees.
+//
+struct CorRestStream
+{
+  pthread_mutex_t         mutex;
+  struct MHD_Connection*  connection;
+  char*                   buf;
+  size_t                  len;            // bytes in buf
+  size_t                  off;            // of them, taken by MHD
+  size_t                  size;           // allocated
+  bool                    suspended;      // the reader suspended the connection, nothing resumed it yet
+  bool                    ended;          // corRestStreamEnd, or the server stops: the body ends after what is in buf
+  bool                    cut;            // fell COR_REST_STREAM_PENDING_MAX behind: the connection is closed
+  bool                    gone;           // the response is destroyed: the connection is over
+  int                     refs;
+};
+
+static pthread_mutex_t    streamsMutex = PTHREAD_MUTEX_INITIALIZER;
+static int                streams      = 0;          // responses not destroyed yet - corRestBackendStop waits for 0
+
+
+
+//
+// resume - the connection back into MHD's loop, if the reader suspended it; called with sP->mutex held
+//
+static void resume(CorRestStream* sP)
+{
+  if ((sP->suspended == true) && (sP->gone == false))
+  {
+    sP->suspended = false;
+    MHD_resume_connection(sP->connection);
+  }
+}
+
+
+
+//
+// release - one reference let go; the last one frees
+//
+static void release(CorRestStream* sP)
+{
+  pthread_mutex_lock(&sP->mutex);
+  int refs = --sP->refs;
+  pthread_mutex_unlock(&sP->mutex);
+
+  if (refs == 0)
+  {
+    pthread_mutex_destroy(&sP->mutex);
+    free(sP->buf);
+    free(sP);
+  }
+}
+
+
+
+//
+// streamRead - MHD's content reader
+//
+static ssize_t streamRead(void* cls, uint64_t pos, char* buf, size_t max)
+{
+  CorRestStream* sP = (CorRestStream*) cls;
+  ssize_t        n  = 0;
+
+  (void) pos;
+
+  pthread_mutex_lock(&sP->mutex);
+
+  if (sP->cut == true)
+    n = MHD_CONTENT_READER_END_WITH_ERROR;
+  else if (sP->len > sP->off)
+  {
+    n = (ssize_t) ((sP->len - sP->off < max) ? sP->len - sP->off : max);
+    memcpy(buf, &sP->buf[sP->off], (size_t) n);
+    sP->off += (size_t) n;
+
+    if (sP->off == sP->len)
+      sP->off = sP->len = 0;
+  }
+  else if (sP->ended == true)
+    n = MHD_CONTENT_READER_END_OF_STREAM;
+  else
+  {
+    sP->suspended = true;
+    MHD_suspend_connection(sP->connection);
+  }
+
+  pthread_mutex_unlock(&sP->mutex);
+  return n;
+}
+
+
+
+//
+// streamFree - MHD's free callback: the response is destroyed, the connection is over
+//
+static void streamFree(void* cls)
+{
+  CorRestStream* sP = (CorRestStream*) cls;
+
+  pthread_mutex_lock(&sP->mutex);
+  sP->gone       = true;
+  sP->connection = NULL;
+  pthread_mutex_unlock(&sP->mutex);
+
+  pthread_mutex_lock(&streamsMutex);
+  --streams;
+  pthread_mutex_unlock(&streamsMutex);
+
+  release(sP);
+}
+
+
+
+//
+// streamResponse - the response for corRestStreamResponse; NULL: none could be made (the handle went to
+// the application as NULL)
+//
+static struct MHD_Response* streamResponse(struct MHD_Connection* connection)
+{
+  CorRestStream*       sP        = (CorRestStream*) calloc(1, sizeof(CorRestStream));
+  struct MHD_Response* responseP = NULL;
+
+  if (sP != NULL)
+  {
+    pthread_mutex_init(&sP->mutex, NULL);
+    sP->connection = connection;
+    sP->refs       = 2;
+
+    responseP = MHD_create_response_from_callback(MHD_SIZE_UNKNOWN, 4096, streamRead, sP, streamFree);
+    if (responseP == NULL)
+    {
+      pthread_mutex_destroy(&sP->mutex);
+      free(sP);
+      sP = NULL;
+    }
+  }
+
+  if (sP != NULL)
+  {
+    pthread_mutex_lock(&streamsMutex);
+    ++streams;
+    pthread_mutex_unlock(&streamsMutex);
+  }
+
+  corRest.out.streamOpenF(sP, corRest.out.streamCtx);
+
+  return responseP;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestStreamWrite -
+//
+bool corRestStreamWrite(CorRestStream* sP, const char* data, int len)
+{
+  bool ok = false;
+
+  pthread_mutex_lock(&sP->mutex);
+
+  if ((sP->gone == false) && (sP->ended == false) && (sP->cut == false))
+  {
+    size_t need = sP->len + (size_t) len;
+
+    if (need - sP->off > COR_REST_STREAM_PENDING_MAX)
+      sP->cut = true;                                 // the reader closes the connection
+    else
+    {
+      if (need > sP->size)
+      {
+        size_t size = (sP->size == 0) ? 4096 : sP->size;
+
+        while (size < need)
+          size *= 2;
+
+        char* bufP = (char*) realloc(sP->buf, size);
+
+        if (bufP == NULL)
+          sP->cut = true;
+        else
+        {
+          sP->buf  = bufP;
+          sP->size = size;
+        }
+      }
+
+      if (sP->cut == false)
+      {
+        memcpy(&sP->buf[sP->len], data, (size_t) len);
+        sP->len = need;
+        ok      = true;
+      }
+    }
+
+    resume(sP);
+  }
+
+  pthread_mutex_unlock(&sP->mutex);
+  return ok;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestStreamEnd -
+//
+void corRestStreamEnd(CorRestStream* sP)
+{
+  pthread_mutex_lock(&sP->mutex);
+  sP->ended = true;
+  resume(sP);
+  pthread_mutex_unlock(&sP->mutex);
+
+  release(sP);
+}
+#endif
 
 
 // -----------------------------------------------------------------------------
@@ -342,11 +578,19 @@ static enum MHD_Result mhdConnectionHandler
   // but suppress the body in the actual response.
   struct MHD_Response* response;
 
+#if COR_WITH_STREAM
+  if (corRest.out.streamOpenF != NULL)
+    response = streamResponse(connection);
+  else
+#endif
   response = MHD_create_response_from_buffer(
     responseBodySize,
     (void*) responseBody,
     MHD_RESPMEM_MUST_COPY
   );
+
+  if (response == NULL)
+    response = MHD_create_response_from_buffer(0, (void*) "", MHD_RESPMEM_PERSISTENT);
 
   CorRestKeyValue headerV[COR_REST_RESPONSE_HEADERS_MAX];
   int             headers = corRestResponseHeaderVBuild(headerV, COR_REST_RESPONSE_HEADERS_MAX);
@@ -693,6 +937,26 @@ int corRestBackendListen(const char* host, unsigned short port)
 //
 void corRestBackendStop(void)
 {
+#if COR_WITH_STREAM
+  //
+  // The application has ended its streams (corRestStream.h); a connection it resumed is still MHD's to
+  // run to its end, and stopping the daemon with one still suspended is an API violation - so the stop
+  // waits for every stream response to be destroyed, 2 s at most
+  //
+  for (int ix = 0; ix < 200; ix++)
+  {
+    pthread_mutex_lock(&streamsMutex);
+    int left = streams;
+    pthread_mutex_unlock(&streamsMutex);
+
+    if (left == 0)
+      break;
+
+    struct timespec tenMs = { 0, 10 * 1000 * 1000 };
+    nanosleep(&tenMs, NULL);
+  }
+#endif
+
   if (mhdDaemon2 != NULL)
   {
     MHD_stop_daemon(mhdDaemon2);

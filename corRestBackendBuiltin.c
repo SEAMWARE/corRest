@@ -77,6 +77,7 @@
 #include "corRest/corRestStateInit.h"     // corRestStateInit, corRestUrlPathNormalize
 #include "corRest/corRestHooks.h"         // CorRestHook, ...
 #include "corRest/corRestUrlValueEncode.h"  // corRestUrlValueDecode
+#include "corRest/corRestStream.h"        // CorRestStream, corRestStreamWrite, corRestStreamEnd
 #include "corRest/corRestBackend.h"       // Own interface
 
 extern CorRestUpgradeHook corRestUpgradeHookF;          // corRestHooks.c
@@ -174,6 +175,69 @@ extern unsigned long long        corRestMaxRequestSize;
 
 
 
+#if COR_WITH_STREAM
+// -----------------------------------------------------------------------------
+//
+// CorRestStream - corHttp's stream (corHttpResponseStream), which is all a stream needs: writes from any
+// thread, queued, a client too far behind disconnected (COR_HTTP_STREAM_PENDING_MAX, the same 16 MiB as
+// COR_REST_STREAM_PENDING_MAX), the end from any thread
+//
+struct CorRestStream
+{
+  CorHttpStream*  httpStreamP;
+};
+
+
+
+// -----------------------------------------------------------------------------
+//
+// streamOpen - the response a stream (corRestStreamResponse): corHttp's, and the handle to the application
+//
+static void streamOpen(CorHttpConn* connP)
+{
+  CorRestStream* streamP = (CorRestStream*) malloc(sizeof(CorRestStream));
+  CorHttpStream* httpP   = corHttpResponseStream(connP);
+
+  if ((streamP == NULL) || (httpP == NULL))
+  {
+    free(streamP);
+    if (httpP != NULL)
+      corHttpStreamEnd(httpP);                       // the body ends at once
+
+    corRest.out.streamOpenF(NULL, corRest.out.streamCtx);
+    return;
+  }
+
+  streamP->httpStreamP = httpP;
+  corRest.out.streamOpenF(streamP, corRest.out.streamCtx);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestStreamWrite -
+//
+bool corRestStreamWrite(CorRestStream* streamP, const char* data, int len)
+{
+  return corHttpStreamWrite(streamP->httpStreamP, data, len);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestStreamEnd -
+//
+void corRestStreamEnd(CorRestStream* streamP)
+{
+  corHttpStreamEnd(streamP->httpStreamP);
+  free(streamP);
+}
+#endif
+
+
+
 // -----------------------------------------------------------------------------
 //
 // requestResponseFill - move corRest.out onto the connection
@@ -200,6 +264,11 @@ static void requestResponseFill(CorHttpConn* connP)
   //
   if ((corRest.out.payload != NULL) && (corRest.out.payloadSize > 0))
     corHttpResponseBody(connP, corRest.out.payload, corRest.out.payloadSize);
+
+#if COR_WITH_STREAM
+  if (corRest.out.streamOpenF != NULL)
+    streamOpen(connP);
+#endif
 }
 
 
