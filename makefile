@@ -110,7 +110,19 @@ else
   $(error COR_WITH_CLIENT_PROXY must be 1 or 0, not '$(COR_WITH_CLIENT_PROXY)')
 endif
 
-CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) -DCOR_WITH_COR_PROTOCOL=$(COR_WITH_COR_PROTOCOL) -DCOR_WITH_CLIENT_PROXY=$(COR_WITH_CLIENT_PROXY) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
+#
+# COR_WITH_STREAM - 1 | 0. A response whose body is written over time (corRestStream.h: server-sent
+# events), on both HTTP servers. 0 leaves its code out of the backends; corRestStreamResponse says false.
+#
+COR_WITH_STREAM ?= 1
+
+ifneq ($(COR_WITH_STREAM),1)
+  ifneq ($(COR_WITH_STREAM),0)
+    $(error COR_WITH_STREAM must be 1 or 0, not '$(COR_WITH_STREAM)')
+  endif
+endif
+
+CFLAGS        = -O2 -Wall -Werror -Wundef -fPIC -fstack-protector-all $(DFLAGS) $(HTTP_SERVER_FLAGS) -DCOR_WITH_COR_PROTOCOL=$(COR_WITH_COR_PROTOCOL) -DCOR_WITH_CLIENT_PROXY=$(COR_WITH_CLIENT_PROXY) -DCOR_WITH_STREAM=$(COR_WITH_STREAM) $(INCLUDE) -MMD -MP $(EXTRA_CFLAGS)
 LIB_SOURCES   = corRestInit.c           \
                 $(HTTP_SERVER_SOURCE)   \
                 corMimeType.c           \
@@ -123,6 +135,7 @@ LIB_SOURCES   = corRestInit.c           \
                 corRestVersion.c        \
                 corRestProblem.c        \
                 corRestOutHeader.c      \
+                corRestStream.c         \
                 corRestHooks.c          \
                 corRestParamRegistry.c  \
                 corRestClient.c         \
