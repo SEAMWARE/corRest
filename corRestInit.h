@@ -54,6 +54,19 @@ extern int corRestInit(CorRestServiceSimplified serviceV[], int services, unsign
 
 // -----------------------------------------------------------------------------
 //
+// corRestPrepare, corRestStart - corRestInit in two steps
+//
+// corRestPrepare builds the service tables and starts the worker pool; corRestStart starts the HTTP server,
+// which accepts connections the moment it is up. Between the two, corRestRunJson runs requests through the
+// services and nobody else can - start-up work that clients must not see half done goes there.
+//
+extern int corRestPrepare(CorRestServiceSimplified serviceV[], int services, int poolSize);
+extern int corRestStart(unsigned short port, int poolSize);
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestListen - a second listener, with routes of its own
 //
 // On 'host' (a name or an address - "127.0.0.1" keeps it to the machine) and 'port', plain HTTP, one I/O

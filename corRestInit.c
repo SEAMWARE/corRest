@@ -1588,9 +1588,9 @@ static int routesBuild(CorRestServiceVector* routeV, CorRestServiceSimplified se
 
 // -----------------------------------------------------------------------------
 //
-// corRestInit -
+// corRestPrepare - the routes and the worker pool, no HTTP server yet
 //
-int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize)
+int corRestPrepare(CorRestServiceSimplified serviceV[], int services, int poolSize)
 {
   if (routesBuild(corRestServiceV, serviceV, services) != 0)
     return -1;
@@ -1611,6 +1611,17 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
     return -1;
   }
 
+  return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestStart - the HTTP server, after corRestPrepare
+//
+int corRestStart(unsigned short port, int poolSize)
+{
   //
   // The HTTP server itself - libmicrohttpd or the built-in one, decided at
   // compile time by COR_HTTP_SERVER. It starts its own threads and returns.
@@ -1622,6 +1633,20 @@ int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned shor
   }
 
   return 0;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestInit -
+//
+int corRestInit(CorRestServiceSimplified serviceV[], int services, unsigned short port, int poolSize)
+{
+  if (corRestPrepare(serviceV, services, poolSize) != 0)
+    return -1;
+
+  return corRestStart(port, poolSize);
 }
 
 
