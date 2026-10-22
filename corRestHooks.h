@@ -176,6 +176,7 @@ extern CorRestHook corRestPreDispatchHookGet(void);   // the hook in place, to c
 extern void corRestSetPrePayloadParseHook(CorRestHook fn);
 extern void corRestSetPayloadParseHook(CorRestHook fn);
 extern void corRestSetPayloadRenderHook(CorRestHook fn);
+extern CorRestHook corRestPayloadRenderHookGet(void);   // the hook in place, to chain on - never NULL
 extern void corRestSetParamHook(CorRestParamHook fn);
 extern void corRestSetPreServiceHook(CorRestPreServiceHook fn);
 //
