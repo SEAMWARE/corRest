@@ -120,6 +120,21 @@ void corRestSetPayloadRenderHook(CorRestHook fn)
 
 // -----------------------------------------------------------------------------
 //
+// corRestPayloadRenderHookGet - the render hook in place (a no-op when none was set)
+//
+// The render hook runs once per dispatched request, after the service routine and before the
+// response is sent. For a second party that needs that moment: it keeps what this returns, sets its
+// own hook, and calls the kept one from it. Never NULL.
+//
+CorRestHook corRestPayloadRenderHookGet(void)
+{
+  return corRestPayloadRenderHook;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
 // corRestSetParamHook -
 //
 void corRestSetParamHook(CorRestParamHook fn)
