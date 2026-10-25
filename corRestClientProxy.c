@@ -27,6 +27,8 @@
 #include <sys/socket.h>                                // send, recv
 #include <time.h>                                      // clock_gettime
 
+#include "corBase/corUriPasswordMask.h"                // corUriPasswordMask
+
 #include "corRest/corRestClientProxy.h"                // Own interface
 
 
@@ -79,8 +81,12 @@ static void base64(const unsigned char* in, int len, char* out)
 //
 // proxyParse - a proxy URL: [http://][user:password@]host[:port][/] (port default 1080, as curl's); false: not one
 //
+// An error names the URL with its password as "***" (corUriPasswordMask): the caller logs it, or prints it.
+//
 static bool proxyParse(const char* url, Proxy* pP, char* errBuf, int errLen)
 {
+  char shown[512];
+
   memset(pP, 0, sizeof(Proxy));
 
   if ((url == NULL) || (url[0] == 0))
@@ -92,7 +98,7 @@ static bool proxyParse(const char* url, Proxy* pP, char* errBuf, int errLen)
     s += 7;
   else if (strstr(s, "://") != NULL)
   {
-    snprintf(errBuf, errLen, "proxy '%s': only an http:// proxy is supported", url);
+    snprintf(errBuf, errLen, "proxy '%s': only an http:// proxy is supported", corUriPasswordMask(url, shown, sizeof(shown)));
     return false;
   }
 
@@ -109,7 +115,7 @@ static bool proxyParse(const char* url, Proxy* pP, char* errBuf, int errLen)
 
     if (len >= (int) sizeof(userinfo))
     {
-      snprintf(errBuf, errLen, "proxy '%s': its user:password is too long", url);
+      snprintf(errBuf, errLen, "proxy '%s': its user:password is too long", corUriPasswordMask(url, shown, sizeof(shown)));
       return false;
     }
 
@@ -133,7 +139,7 @@ static bool proxyParse(const char* url, Proxy* pP, char* errBuf, int errLen)
     const char* close = strchr(s, ']');
     if ((close == NULL) || (close > end))
     {
-      snprintf(errBuf, errLen, "proxy '%s': an IPv6 address without its ']'", url);
+      snprintf(errBuf, errLen, "proxy '%s': an IPv6 address without its ']'", corUriPasswordMask(url, shown, sizeof(shown)));
       return false;
     }
     snprintf(pP->host, sizeof(pP->host), "%.*s", (int) (close - s - 1), s + 1);
@@ -153,14 +159,14 @@ static bool proxyParse(const char* url, Proxy* pP, char* errBuf, int errLen)
     port = strtol(colon + 1, &after, 10);
     if ((after != end) || (port <= 0) || (port > 65535))
     {
-      snprintf(errBuf, errLen, "proxy '%s': not a port", url);
+      snprintf(errBuf, errLen, "proxy '%s': not a port", corUriPasswordMask(url, shown, sizeof(shown)));
       return false;
     }
   }
 
   if (pP->host[0] == 0)
   {
-    snprintf(errBuf, errLen, "proxy '%s': no host", url);
+    snprintf(errBuf, errLen, "proxy '%s': no host", corUriPasswordMask(url, shown, sizeof(shown)));
     return false;
   }
 
