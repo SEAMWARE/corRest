@@ -16,6 +16,7 @@
 #include "corAlloc/corAlloc.h"          // corAlloc
 #include "corAlloc/corAllocStrdup.h"    // corAllocStrdup
 #include "corAlloc/CorAlloc.h"          // CorAlloc
+#include "corJson/CorJsonStatus.h"      // CorJsonMaxDepthExceeded
 #include "corJson/corJsonParse.h"       // corJsonParse
 #include "corJson/corJsonRender.h"      // corJsonFastRender
 #include "corJson/corJsonRenderSize.h"  // corJsonFastRenderSize
@@ -648,9 +649,14 @@ void corRestProcessRequest(void)
     if (corRest.in.payload != NULL && corRest.in.requestTree == NULL)
     {
       // Failed JSON parse: per § 4.9 / § 6.3.4 this is InvalidRequest at 400,
-      // not 415 (which is reserved for unsupported Content-Type).
-      corRestProblem(400, COR_REST_ERROR_INVALID_REQ, "Invalid Request",
-                    "request body is not valid JSON");
+      // not 415 (which is reserved for unsupported Content-Type). A body nested
+      // deeper than corJson admits may well be valid JSON - it is not called invalid.
+      if (corRest.corJsonP->status == CorJsonMaxDepthExceeded)
+        corRestProblem(400, COR_REST_ERROR_INVALID_REQ, "Invalid Request",
+                      "request body nested deeper than 100 levels");
+      else
+        corRestProblem(400, COR_REST_ERROR_INVALID_REQ, "Invalid Request",
+                      "request body is not valid JSON");
       goto respond;
     }
     if (corRest.in.requestTree == NULL)
