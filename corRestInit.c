@@ -684,7 +684,24 @@ void corRestProcessRequest(void)
   }
 
   // Dispatch to service routine
+  int headersBefore = corRest.out.headerCount;
+
   corRest.serviceP->serviceRoutine();
+
+  // A late problem (corRestProblemLate) replaces whatever the service routine answered
+  if (corRest.out.lateStatus != 0)
+  {
+    corRest.out.httpStatusCode = corRest.out.lateStatus;
+    corRest.out.problemType    = corRest.out.lateType;
+    corRest.out.problemTitle   = corRest.out.lateTitle;
+    corRest.out.problemExtras  = NULL;
+    corRest.out.responseTree   = NULL;
+    corRest.out.payload        = NULL;
+    corRest.out.payloadSize    = 0;
+    corRest.out.streamOpenF    = NULL;
+    corRest.out.headerCount    = headersBefore;      // the headers the routine added describe its answer
+    snprintf(corRest.out.problemDetail, sizeof(corRest.out.problemDetail), "%s", corRest.out.lateDetail);
+  }
 
   // Call render hook unconditionally — the renderHook does the
   // § 6.3.4 Accept-negotiation 406 check, which must override an
