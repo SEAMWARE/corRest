@@ -52,4 +52,32 @@ extern void corRestProblemFunction
 #define corRestProblem(statusCode, type, title, ...)  \
   corRestProblemFunction(statusCode, type, title, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestProblemLateFunction - a problem that replaces the service routine's answer
+//
+// For a layer the service routine calls that learns of a failure only after the routine has had its
+// answer from it - a store whose write was taken but could not be kept (its log could not be written
+// or synced). Once the service routine returns, its answer - status, body, the headers it added - is
+// replaced by this problem. The first late problem of a request is the one answered; each is logged
+// when it is raised. Use the corRestProblemLate macro.
+//
+extern void corRestProblemLateFunction
+(
+  int          statusCode,
+  const char*  type,
+  const char*  title,
+  const char*  fileName,
+  int          lineNo,
+  const char*  functionName,
+  const char*  fmt,
+  ...
+);
+
+#define corRestProblemLate(statusCode, type, title, ...)  \
+  corRestProblemLateFunction(statusCode, type, title, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
+
 #endif  // CORREST_PROBLEM_H_

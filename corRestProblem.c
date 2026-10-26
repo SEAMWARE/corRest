@@ -8,6 +8,7 @@
 //
 #include <stdarg.h>                     // va_list, va_start, va_end
 #include <stdio.h>                      // vsnprintf
+#include <string.h>                     // memcpy
 
 #include "corLog/corLogOut.h"           // corLogOut
 #include "corRest/CorRestState.h"         // corRest
@@ -50,4 +51,40 @@ void corRestProblemFunction
   // call site, which would point every problem the library reports at this line.
   //
   corLogOut(fileName, lineNo, functionName, 'E', -1, "%d %s: %s", statusCode, title, corRest.out.problemDetail);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// corRestProblemLateFunction - use the corRestProblemLate macro (captures the call site)
+//
+void corRestProblemLateFunction
+(
+  int          statusCode,
+  const char*  type,
+  const char*  title,
+  const char*  fileName,
+  int          lineNo,
+  const char*  functionName,
+  const char*  fmt,
+  ...
+)
+{
+  char    detail[sizeof(corRest.out.lateDetail)];
+  va_list ap;
+
+  va_start(ap, fmt);
+  vsnprintf(detail, sizeof(detail), fmt, ap);
+  va_end(ap);
+
+  corLogOut(fileName, lineNo, functionName, 'E', -1, "%d %s: %s", statusCode, title, detail);
+
+  if (corRest.out.lateStatus != 0)                     // the first one is answered
+    return;
+
+  corRest.out.lateStatus = statusCode;
+  corRest.out.lateType   = type;
+  corRest.out.lateTitle  = title;
+  memcpy(corRest.out.lateDetail, detail, sizeof(detail));
 }

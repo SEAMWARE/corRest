@@ -48,6 +48,13 @@ typedef struct CorRestOut
   const char*  problemTitle;        // Short title
   char         problemDetail[512];  // Detail message (formatted)
   CorNode*     problemExtras;       // Optional extension members (RFC 9457 §3.2) spliced into the body; NULL = none
+
+  // A late problem (corRestProblemLate) - raised by a layer under the service routine (a store) about
+  // what the routine has already done: it replaces the routine's answer, whatever that is. 0: none
+  int          lateStatus;
+  const char*  lateType;
+  const char*  lateTitle;
+  char         lateDetail[256];
 } CorRestOut;
 
 #endif  // CORREST_OUT_H_
