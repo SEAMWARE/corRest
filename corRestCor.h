@@ -15,8 +15,9 @@
 // body arrives as the tree the service routine works on, and a response leaves as the tree it built,
 // with no JSON parse or render on either side.
 //
-// v1: one TCP connection per peer and client thread, one request in flight on it. The frames carry
-// correlation ids already; multiplexing is a later step that changes no byte of the format.
+// Multiplexed (coraine doc/cor-protocol-details.md § 5.3): a client keeps one connection per peer and
+// thread, and any number of requests are in flight on a connection at once - each frame carries the
+// correlation id its response is matched by, and the responses come back in the order they finish.
 //
 #include <stdbool.h>                                  // bool
 

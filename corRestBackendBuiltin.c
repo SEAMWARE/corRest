@@ -890,12 +890,11 @@ void corRestBackendStop(void)
     return;
 
   //
-  // Signal them ALL first, then join them all. Stopping and joining one at a
-  // time would serialise the 1 s timeouts - eight loops would take eight
-  // seconds to shut down.
+  // Signal them ALL first, then join them all, so the loops wind down side by
+  // side rather than one after the other.
   //
   for (int ix = 0; ix < corHttpLoops; ix++)
-    corHttpStop(&corHttpServerV[ix]);   // a flag; each loop notices within its 1 s timeout
+    corHttpStop(&corHttpServerV[ix]);   // a flag, and its eventfd written - the loop wakes at once
 
   for (int ix = 0; ix < corHttpLoops; ix++)
     pthread_join(corHttpThreadV[ix], NULL);

@@ -143,13 +143,12 @@ typedef struct CorRestState
 //
 // corRest - per-request state, reached through a thread-local pointer
 //
-// Historically `corRest` was a plain __thread object. It is now a __thread
-// POINTER (corRestP) behind the `corRest` macro, so the state can later be
-// relocated off the thread (into the backend's per-connection slot) without touching
-// the ~2000 `corRest.foo` call sites. Until a request handler binds corRestP to
-// a connection's state, corRestBind() auto-binds it to a per-thread fallback
-// object — making every access crash-proof and, for now, behaviourally
-// identical to the old __thread object (still exactly one state per thread).
+// A __thread POINTER (corRestP) behind the `corRest` macro. Each request has a
+// state of its own, allocated by the backend; the thread running the request -
+// the I/O thread, a worker, a coroutine's loop - binds corRestP to it for as long
+// as it runs it, and unbinds it after. A thread that touches `corRest` with
+// nothing bound gets a per-thread fallback object (corRestBind), so an access
+// outside a request never dereferences NULL.
 //
 extern __thread CorRestState  corRestFallback;   // per-thread fallback storage
 extern __thread CorRestState* corRestP;          // current state (NULL until first bound)

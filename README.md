@@ -1,7 +1,8 @@
 # corRest — REST Server & HTTP Client Library
 
-A compact REST layer for C: an HTTP **server** built on libmicrohttpd with a
-flat, verb-indexed service table and fast wildcard URL matching, plus a full HTTP
+A compact REST layer for C: an HTTP **server** - on libmicrohttpd or on the
+built-in epoll server of [`corHttp`](https://github.com/SEAMWARE/corHttp), chosen at
+build time (`COR_HTTP_SERVER`) - with a flat, verb-indexed service table and fast wildcard URL matching, plus a full HTTP
 **client** (blocking, parallel-multi, connection-pooled, TLS). It is the transport
 layer under the coraine NGSI-LD context broker, but has no NGSI-LD dependency of
 its own.
@@ -16,8 +17,18 @@ its own.
   the library splits them by HTTP method into per-verb vectors at init.
 - **Fast URL matching** — character-sum hashing and pre-computed wildcard offsets
   avoid `strcmp` on the hot path; supports single (`*`) and greedy (`**`) wildcards.
-- **Per-request state** — a thread-local request context (`corRest`) bound for the
-  duration of a connection.
+- **Per-request state** — each request has a state of its own (`corRest`, a
+  `__thread` pointer behind a macro), bound to the thread that runs the request -
+  the I/O thread, a worker or a coroutine's loop - while it runs it.
+- **Hooks** — the application plugs in at fixed points of a request
+  (`corRestHooks.h`): pre-dispatch, payload parse and render, URL parameters,
+  admission, pre-service, post-response, whether a request runs inline or as a
+  coroutine of the loop, a protocol upgrade (`Upgrade:`, WebSocket), per-request
+  user data, CORS.
+- **Streamed responses** (`COR_WITH_STREAM`) — a body written over time, chunked
+  (`corRestStream.h`, server-sent events), on both HTTP servers.
+- **cor://** (`COR_WITH_COR_PROTOCOL`) — the same service routines over the binary
+  cor format, server and client, multiplexed (`corRestCor.h`).
 - **HTTP client** — request builder, JSON bodies, per-request timeouts, response
   header access.
 - **Parallel multi-client** — fire N requests and harvest them together (used for
@@ -54,6 +65,7 @@ typedef struct CorRestServiceSimplified {
   uint64_t              supportedParams; // bitmask of accepted URL params
   uint64_t              ldOp;            // atomic-op bit (0 for non-NGSI-LD routes)
   CorRestServiceRoutine  payloadCheck;    // optional body validator (NULL = none)
+  CorRestServiceOptions  options;         // declared features: wildcard checks, body kind (CorRestService.h)
 } CorRestServiceSimplified;
 
 // URL-param name → bitmask bit (for supportedParams)
@@ -67,13 +79,14 @@ int  corRestInit(CorRestServiceSimplified serviceV[], int services,
                 unsigned short port, int poolSize);
 void corRestStop(void);
 
-void corRestStateInit(struct MHD_Connection* connection, const char* url, const char* method);
+void corRestStateInit(void* connection, const char* url, const char* method);
 void corRestStateRelease(void);
 ```
 
-`corRestInit` expands the flat service array into per-verb vectors and starts the
-microhttpd listener on `port`. `corRestStateInit` / `corRestStateRelease` manage the
-thread-local per-request state.
+`corRestInit` expands the flat service array into per-verb vectors, starts the
+worker pool (`poolSize`) and then the HTTP server on `port`. `corRestStateInit` /
+`corRestStateRelease` set up and release the bound request's state; the
+`connection` is the backend's own handle.
 
 ### Client
 
@@ -141,8 +154,8 @@ static bool pingGet(void)
 
 static CorRestServiceSimplified services[] =
 {
-  { CorVerbGet, "/ping",            pingGet, 0, 0, NULL },
-  { CorVerbGet, "/things/*",        thingGet, 0, 0, NULL },   // single-wildcard
+  { CorVerbGet, "/ping",            pingGet, 0, 0, NULL, {} },
+  { CorVerbGet, "/things/*",        thingGet, 0, 0, NULL, {} },   // single-wildcard
 };
 
 int main(void)
@@ -163,8 +176,14 @@ make            # build libcorRest.a (+ .so) and the test binary
 make ci         # clean + install
 make di         # debug + install
 make clientLifetimeTest   # the lifetime of a client response, under AddressSanitizer
+make COR_HTTP_SERVER=builtin   # the built-in server (corHttp) instead of libmicrohttpd
 make COR_WITH_CLIENT_PROXY=0   # without the client's HTTP proxy
+make COR_WITH_COR_PROTOCOL=0   # without cor://
+make COR_WITH_STREAM=0         # without streamed responses
 ```
+
+With `COR_HTTP_SERVER=builtin` a consumer links `../corHttp/libcorHttp.a` as well:
+an archive cannot hold another one.
 
 `libcorRest.a` links statically into its consumers. Sibling repos must be
 present (the build references `../<lib>/lib<lib>.a`).
@@ -178,6 +197,8 @@ Sibling repos (one `.a` each):
 - [`corJson`](https://github.com/SEAMWARE/corJson) — JSON parsing and rendering
 - [`corBase`](https://github.com/SEAMWARE/corBase) — core utilities and the library log (`COR_LIB_*`)
 - [`corLog`](https://github.com/SEAMWARE/corLog) — logging and trace levels
+- [`corHttp`](https://github.com/SEAMWARE/corHttp) — the built-in HTTP server, with
+  `COR_HTTP_SERVER=builtin` only
 
-System libraries: `libmicrohttpd` (HTTP server), `openssl` (`ssl`/`crypto`, TLS
+System libraries: `libmicrohttpd` (HTTP server, with `COR_HTTP_SERVER=mhd`, the default), `openssl` (`ssl`/`crypto`, TLS
 client), `pthread`, `m`.
