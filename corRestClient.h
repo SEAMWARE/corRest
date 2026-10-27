@@ -178,11 +178,12 @@ typedef struct CorRestClientMulti CorRestClientMulti;
 //
 extern int   corRestClientInit(int maxIdleConns, int idleTimeoutSec, const char* userAgent);
 
-// Default per-request timeout used by corRestClientRequestInit when the
-// caller doesn't override it via corRestClientRequestTimeout. Settable at
-// boot (e.g. via coraine's --distOpTimeout/-dtmo CLI flag); applies to
-// every HTTP-client call the broker makes (distop forwards, subscription
-// notifications, JSON-LD context downloads, …).
+// Default per-request timeout (ms, 5000) that corRestClientRequestInit puts on a
+// request; a caller that calls corRestClientRequestTimeout replaces it. Settable
+// at boot (coraine's --distOpTimeout/-dtmo). It applies only to the requests
+// that set no timeout of their own - in coraine, a forward to a Context Source
+// whose registration has none. Notifications and @context downloads set theirs
+// (10 s unless the subscription says otherwise).
 extern int   corRestClientDefaultRequestTimeoutMs;
 
 // The User-Agent every client path puts on the wire. Set once at boot via

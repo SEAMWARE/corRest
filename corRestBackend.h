@@ -59,16 +59,19 @@ extern int   corRestBackendListen(const char* host, unsigned short port);
 //
 // corRestHttpLoopsSet - how many event loops share the listening port
 //
-// BUILTIN SERVER ONLY, and a no-op on the libmicrohttpd one, which has a thread
-// per connection and no loop to multiply. Call it before corRestInit; out-of-
-// range values are clamped rather than refused.
+// BUILTIN SERVER ONLY, and a no-op on the libmicrohttpd one, which runs its own
+// pool of epoll threads (MHD_OPTION_THREAD_POOL_SIZE) and has no loop of ours to
+// multiply. Call it before corRestInit; out-of-range values are clamped (1-64)
+// rather than refused. Default 1.
 //
-// One loop does all the socket I/O for every connection it owns - accept, read,
-// parse and write - with the workers running only the service routine in
-// between. That single thread is what leaves the machine half idle: 4.4 of 8
-// cores against libmicrohttpd's 7.9, at a lower cost per request. More loops,
-// each with its own listen socket on the same port (SO_REUSEPORT), its own
-// epoll and its own connection pool, is the way to use the rest.
+// One loop does all the socket I/O for every connection it owns - read, parse
+// and write - with the workers running only the service routine in between.
+// Measured 2026-09-15 on 8 cores with 319-byte responses, one loop used 4.4 of
+// the cores and libmicrohttpd 7.9, at a lower cost per request (70.7 us against
+// 89.0). With more loops each has its own epoll, its own connection pool (the
+// slots are divided among the loops) and its own resume queue; the first loop
+// alone listens, accepts every connection and deals them out in turn
+// (corHttpAcceptShare), and a connection stays with its loop for its whole life.
 //
 extern void  corRestHttpLoopsSet(int loops);
 
@@ -115,8 +118,9 @@ extern void  corRestBackendStop(void);
 // therefore has to be given back. Binds corRestP to stateP, runs the
 // post-response hook, releases the arena, frees the state, and unbinds.
 //
-// Runs on a worker whenever there is a pool (corRestAsyncFinish), on the
-// calling thread otherwise.
+// Built-in server: on a worker whenever there is a pool (corRestAsyncFinish),
+// on the calling loop otherwise. libmicrohttpd: on its I/O thread, from the
+// request-completed callback (MHD_OPTION_NOTIFY_COMPLETED).
 //
 extern void  corRestBackendFinish(CorRestState* stateP);
 

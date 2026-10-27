@@ -48,8 +48,7 @@ static bool        tlsInited = false;
 //
 // corRestClientDefaultRequestTimeoutMs - boot-time default for every client
 // request that doesn't call corRestClientRequestTimeout explicitly. coraine
-// exposes this via the --distOpTimeout/-dtmo CLI flag; ETSI runs can dial
-// it down to skip the 10 s wait per unmatched HttpCtrl stub forward.
+// exposes this via the --distOpTimeout/-dtmo CLI flag.
 //
 int corRestClientDefaultRequestTimeoutMs = 5000;
 
