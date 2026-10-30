@@ -18,7 +18,7 @@
 #include <fcntl.h>                               // fcntl
 #include <poll.h>                                // poll
 #include <sys/epoll.h>                           // epoll_create1, epoll_ctl, epoll_wait
-#include <sys/socket.h>                          // socket, connect, recv
+#include <sys/socket.h>                          // socket, connect, recv, send, MSG_NOSIGNAL
 #include <netinet/in.h>                          // sockaddr_in
 #include <netinet/tcp.h>                         // TCP_NODELAY
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
@@ -782,7 +782,7 @@ int corRestClientMultiPerform(CorRestClientMulti* multi, int timeoutMs)
           if (conn->ssl != NULL)
             n = corRestClientTlsWrite(conn, entry->sendBuf + entry->sendPos, remaining);
           else
-            n = (int)write(conn->fd, entry->sendBuf + entry->sendPos, remaining);
+            n = (int)send(conn->fd, entry->sendBuf + entry->sendPos, remaining, MSG_NOSIGNAL);   // a receiver gone: EPIPE, not SIGPIPE
 
           if (n < 0)
           {

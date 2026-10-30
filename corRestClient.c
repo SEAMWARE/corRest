@@ -17,7 +17,7 @@
 #include <errno.h>                               // errno
 #include <fcntl.h>                               // fcntl
 #include <poll.h>                                // poll
-#include <sys/socket.h>                          // socket, connect, getsockopt
+#include <sys/socket.h>                          // socket, connect, getsockopt, send, MSG_NOSIGNAL
 #include <netinet/in.h>                          // sockaddr_in
 #include <netinet/tcp.h>                         // TCP_NODELAY
 #include <netdb.h>                               // getaddrinfo, freeaddrinfo
@@ -397,7 +397,7 @@ static int connWrite(CorRestClientConn* conn, const char* buf, int len)
   if (conn->ssl != NULL)
     return corRestClientTlsWrite(conn, buf, len);
 
-  return (int)write(conn->fd, buf, len);
+  return (int)send(conn->fd, buf, len, MSG_NOSIGNAL);   // a receiver gone: EPIPE, not SIGPIPE
 }
 
 
