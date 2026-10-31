@@ -563,6 +563,13 @@ void corRestProcessRequest(void)
     for (int v = 0; v < CorVerbs; v++)
     {
       if (v == corRest.in.verb) continue;
+
+      // The full path back before every probe: one that matched a wildcard route cut it short, and the
+      // next verb's routes matched the shorter path - DELETE /temporal/entities/*/attrs/* left
+      // /temporal/entities/{id}, and HEAD (from GET /temporal/entities/*) was in the Allow list
+      if (corRest.in.urlPath != NULL)
+        strcpy(corRest.in.urlPath, reqPath);
+
       CorRestService* probe = corRestServiceLookup(&routesOf()[v]);
       if (probe == NULL) continue;
       if (pos > 0) { allow[pos++] = ','; allow[pos++] = ' '; }
